@@ -42,12 +42,13 @@ type Options struct {
 
 // Reader reads the events of one text/event-stream. It is not safe for concurrent use.
 type Reader struct {
-	parser       parser
-	chunks       chan chunk
-	done         chan struct{}
-	stallTimeout time.Duration
-	stallTimer   *time.Timer
-	err          error
+	parser         parser
+	chunks         chan chunk
+	streamEnded    chan struct{}
+	sourceReleased chan struct{}
+	stallTimeout   time.Duration
+	stallTimer     *time.Timer
+	err            error
 }
 
 type chunk struct {
@@ -58,7 +59,7 @@ type chunk struct {
 
 // NewReader starts reading source on its own goroutine. That goroutine ends when source
 // returns an error or, once Next has returned an error, after its next read; close source to
-// release it, which is what ends a stalled stream.
+// release it, which is what ends a stalled stream, and wait on Done to know it has ended.
 func NewReader(source io.Reader, options Options) *Reader {
 	stallTimeout := options.StallTimeout
 	if stallTimeout == 0 {
@@ -66,11 +67,12 @@ func NewReader(source io.Reader, options Options) *Reader {
 	}
 
 	reader := &Reader{
-		parser:       parser{lastEventID: options.LastEventID},
-		chunks:       make(chan chunk, 1),
-		done:         make(chan struct{}),
-		stallTimeout: stallTimeout,
-		stallTimer:   time.NewTimer(stallTimeout),
+		parser:         parser{lastEventID: options.LastEventID},
+		chunks:         make(chan chunk, 1),
+		streamEnded:    make(chan struct{}),
+		sourceReleased: make(chan struct{}),
+		stallTimeout:   stallTimeout,
+		stallTimer:     time.NewTimer(stallTimeout),
 	}
 	go reader.readSource(source)
 	return reader
@@ -108,6 +110,12 @@ func (reader *Reader) LastEventID() string {
 	return reader.parser.lastEventID
 }
 
+// Done is closed once the goroutine reading source has returned, which happens after source
+// returns an error. Once Next has returned an error, closing source is what makes it return.
+func (reader *Reader) Done() <-chan struct{} {
+	return reader.sourceReleased
+}
+
 // RetryDelay is the reconnection delay the server last requested through a retry field, and
 // whether it requested one.
 func (reader *Reader) RetryDelay() (time.Duration, bool) {
@@ -134,10 +142,11 @@ func (reader *Reader) nextChunk() (chunk, error) {
 func (reader *Reader) endStream(err error) {
 	reader.err = err
 	reader.stallTimer.Stop()
-	close(reader.done)
+	close(reader.streamEnded)
 }
 
 func (reader *Reader) readSource(source io.Reader) {
+	defer close(reader.sourceReleased)
 	buffer := make([]byte, readBufferBytes)
 	for {
 		count, err := source.Read(buffer)
@@ -147,7 +156,7 @@ func (reader *Reader) readSource(source io.Reader) {
 
 		select {
 		case reader.chunks <- chunk{content: bytes.Clone(buffer[:count]), err: err, arrivedAt: time.Now()}:
-		case <-reader.done:
+		case <-reader.streamEnded:
 			return
 		}
 		if err != nil {

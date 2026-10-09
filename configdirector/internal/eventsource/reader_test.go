@@ -422,6 +422,34 @@ func TestNextReleasesTheReadingGoroutineOnceAStalledSourceIsClosed(t *testing.T)
 	require.Eventually(t, func() bool { return readingGoroutines() == 0 }, time.Second, 10*time.Millisecond)
 }
 
+func TestDoneIsClosedOnceAStalledSourceIsClosed(t *testing.T) {
+	pipeReader, _ := openPipe(t)
+	reader := NewReader(pipeReader, Options{StallTimeout: 50 * time.Millisecond})
+	_, err := reader.Next()
+	require.ErrorIs(t, err, errStreamStalled)
+
+	require.NoError(t, pipeReader.Close())
+
+	select {
+	case <-reader.Done():
+	case <-time.After(time.Second):
+		t.Fatal("Done was not closed after the source was closed")
+	}
+}
+
+func TestDoneStaysOpenWhileTheSourceIsStillBlocked(t *testing.T) {
+	pipeReader, _ := openPipe(t)
+	reader := NewReader(pipeReader, Options{StallTimeout: 50 * time.Millisecond})
+	_, err := reader.Next()
+	require.ErrorIs(t, err, errStreamStalled)
+
+	select {
+	case <-reader.Done():
+		t.Fatal("Done was closed while the source was still blocked in Read")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
 func TestNextReleasesTheReadingGoroutineAfterAProtocolErrorWithBytesStillPending(t *testing.T) {
 	source := strings.NewReader(strings.Repeat("x", 4*maxLineBytes) + "\ndata: after\n\n")
 	reader := NewReader(source, Options{})
