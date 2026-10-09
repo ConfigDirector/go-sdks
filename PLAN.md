@@ -44,7 +44,7 @@ Umbrella card: https://trello.com/c/vO00qvNu. Each increment below is one Trello
 
 - [x] 0. Repository bootstrap: modules, `go.work`, Makefile, CI, CONTRIBUTING, README, CHANGELOGs, `PLAN.md`. https://trello.com/c/24uejNbJ
 - [x] 1. Evaluator passing the targeting-rules contract (harness and `check-go` target in the contract repo). https://trello.com/c/ttMBEGPY
-- [ ] 2a. Client construction, readiness, typed reads, details, `AllConfigs`, over a stub connection. https://trello.com/c/Fhk1UiaC
+- [x] 2a. Client construction, readiness, typed reads, details, `AllConfigs`, over a stub connection. https://trello.com/c/Fhk1UiaC
 - [ ] 2b. Hooks, events and watches. https://trello.com/c/7xefH8eR
 - [ ] 4. Gin sample for the SDK. https://trello.com/c/IpVV28hU
 - [ ] 5. SSE event-stream parser. https://trello.com/c/XMmyx4lI
@@ -87,3 +87,4 @@ Tick an item above and add one line here per completed increment: date, incremen
 
 - 2026-10-09, increment 0. `go 1.26`, not the 1.25 the card named: Go 1.27 shipped on 2026-08-19 and `github.com/open-feature/go-sdk` v1.19.0 already requires 1.26. The provider's `go.mod` requires testify only for now: `go mod tidy` ignores `go.work` and drops a requirement nothing imports, and the SDK requirement cannot resolve until `configdirector/v0.1.0` is tagged (increment 11); increment 15 adds both.
 - 2026-10-09, increment 1. `internal/evaluation` passes all 4,486 condition, 118 bucketing and 60 segment cases. The harness maps the wire shape onto the evaluator's types itself until increment 7 adds the payload parser; an empty context identifier is treated as no identifier (assigned 0.0), where Python and JavaScript hash the empty string.
+- 2026-10-09, increment 2a. `WaitForReady` applies `ConnectionOptions.Timeout` as an upper bound on the caller's context and returns `ErrClientClosed` after `Close`; `JSONValue` decodes as `encoding/json` does, after a trial decode so a document that does not fit leaves the target untouched; the `Evaluation` type stays unexported until the events card returns it; a zero `Timeout` is the 3s default and only a negative one is rejected; the `connection` interface reports readiness by delivering its first payload rather than through a separate call. The stand-in connection delivers its payload after 200ms so readiness can be observed through the public API.
