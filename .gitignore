@@ -1,0 +1,14 @@
+# Tools the Makefile installs, pinned by version.
+.tools/
+
+*.test
+*.out
+coverage.*
+
+.env
+
+.DS_Store
+.idea/
+*.swp
+.claude
+.vscode

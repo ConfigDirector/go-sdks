@@ -1,0 +1,57 @@
+name: go-sdks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# The checks themselves live in the Makefile so that CI and the pre-push hook cannot drift
+# apart. bash everywhere keeps the make recipes portable across the runner images.
+defaults:
+  run:
+    shell: bash
+
+env:
+  # Never download another toolchain: each job runs on exactly the Go version it names, so a
+  # go directive above the oldest supported release fails here instead of being papered over.
+  GOTOOLCHAIN: local
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+          cache-dependency-path: "**/go.sum"
+
+      - run: make verify-tidy
+      - run: make lint
+
+  test:
+    name: Test (Go ${{ matrix.go }} on ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        # The oldest release the Go team still supports (the go directive in go.work) and the
+        # current one.
+        go: ["1.26", "1.27"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ matrix.go }}
+          cache-dependency-path: "**/go.sum"
+
+      - run: make test-race
