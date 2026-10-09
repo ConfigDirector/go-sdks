@@ -43,7 +43,7 @@ Umbrella card: https://trello.com/c/vO00qvNu. Each increment below is one Trello
 ### 4.1 SDK
 
 - [x] 0. Repository bootstrap: modules, `go.work`, Makefile, CI, CONTRIBUTING, README, CHANGELOGs, `PLAN.md`. https://trello.com/c/24uejNbJ
-- [ ] 1. Evaluator passing the targeting-rules contract (harness and `check-go` target in the contract repo). https://trello.com/c/ttMBEGPY
+- [x] 1. Evaluator passing the targeting-rules contract (harness and `check-go` target in the contract repo). https://trello.com/c/ttMBEGPY
 - [ ] 2a. Client construction, readiness, typed reads, details, `AllConfigs`, over a stub connection. https://trello.com/c/Fhk1UiaC
 - [ ] 2b. Hooks, events and watches. https://trello.com/c/7xefH8eR
 - [ ] 4. Gin sample for the SDK. https://trello.com/c/IpVV28hU
@@ -86,3 +86,4 @@ Umbrella card: https://trello.com/c/vO00qvNu. Each increment below is one Trello
 Tick an item above and add one line here per completed increment: date, increment, deviation if any.
 
 - 2026-10-09, increment 0. `go 1.26`, not the 1.25 the card named: Go 1.27 shipped on 2026-08-19 and `github.com/open-feature/go-sdk` v1.19.0 already requires 1.26. The provider's `go.mod` requires testify only for now: `go mod tidy` ignores `go.work` and drops a requirement nothing imports, and the SDK requirement cannot resolve until `configdirector/v0.1.0` is tagged (increment 11); increment 15 adds both.
+- 2026-10-09, increment 1. `internal/evaluation` passes all 4,486 condition, 118 bucketing and 60 segment cases. The harness maps the wire shape onto the evaluator's types itself until increment 7 adds the payload parser; an empty context identifier is treated as no identifier (assigned 0.0), where Python and JavaScript hash the empty string.
