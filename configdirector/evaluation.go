@@ -113,27 +113,43 @@ type ConfigState struct {
 	ValueID string
 }
 
-type configEvaluation struct {
-	key         string
-	value       any
-	usedDefault bool
-	reason      EvaluationReason
-	valueID     string
-	userContext UserContext
+// Evaluation is one evaluation of a config: what was asked for and what came back. It is handed
+// to OnConfigEvaluated handlers for every read and every watch that fires.
+type Evaluation struct {
+	// Key is the config's key.
+	Key string
+
+	// Value is the value the evaluation produced: the served value read as the requested type,
+	// or the in-code default value when UsedDefault is true. For a JSON read it is what the
+	// target holds after the read.
+	Value any
+
+	// UsedDefault is true when the in-code default value was returned.
+	UsedDefault bool
+
+	// Reason says why the evaluation produced the value it did.
+	Reason EvaluationReason
+
+	// ValueID identifies the served value in ConfigDirector. Empty when the in-code default value
+	// was returned.
+	ValueID string
+
+	// UserContext is the user the config was evaluated for.
+	UserContext UserContext
 }
 
-func servedEvaluation(key string, value any, valueID string, userContext UserContext) configEvaluation {
-	return configEvaluation{key: key, value: value, reason: EvaluationReasonFoundMatch, valueID: valueID, userContext: userContext}
+func servedEvaluation(key string, value any, valueID string, userContext UserContext) Evaluation {
+	return Evaluation{Key: key, Value: value, Reason: EvaluationReasonFoundMatch, ValueID: valueID, UserContext: userContext}
 }
 
-func defaultEvaluation(key string, reason EvaluationReason, userContext UserContext) configEvaluation {
-	return configEvaluation{key: key, usedDefault: true, reason: reason, userContext: userContext}
+func defaultEvaluation(key string, defaultValue any, reason EvaluationReason, userContext UserContext) Evaluation {
+	return Evaluation{Key: key, Value: defaultValue, UsedDefault: true, Reason: reason, UserContext: userContext}
 }
 
-func (evaluated configEvaluation) details() EvaluationDetails {
+func (evaluated Evaluation) details() EvaluationDetails {
 	return EvaluationDetails{
-		Reason:      evaluated.reason,
-		ValueID:     evaluated.valueID,
-		UsedDefault: evaluated.usedDefault,
+		Reason:      evaluated.Reason,
+		ValueID:     evaluated.ValueID,
+		UsedDefault: evaluated.UsedDefault,
 	}
 }

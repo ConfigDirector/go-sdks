@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"reflect"
 	"sync"
 
 	"github.com/ConfigDirector/go-sdks/configdirector/internal/evaluation"
@@ -21,16 +22,24 @@ var ErrClientClosed = errors.New("configdirector: the client is closed")
 // client does not hold, a client that is not ready, or a value that cannot be read as the
 // requested type all produce the default. The *ValueDetails methods report which of those
 // happened.
+//
+// To learn about config state as it changes rather than on each read, register handlers with
+// OnReady, OnConfigsUpdated and OnConfigEvaluated, or watch one key with WatchBool and its
+// siblings. Handlers run on the connection's goroutine, so one that blocks delays later updates;
+// a panic in a handler is recovered and logged at error level, and the connection continues.
 type Client struct {
 	settings   clientSettings
 	connection connection
 
-	mutex    sync.RWMutex
-	snapshot *configSnapshot
-	closed   bool
+	mutex             sync.RWMutex
+	snapshot          *configSnapshot
+	closed            bool
+	readyHandlers     handlerList[struct{}]
+	updatedHandlers   handlerList[ConfigsUpdated]
+	evaluatedHandlers handlerList[Evaluation]
+	watches           watchList
 
 	ready     chan struct{}
-	readyOnce sync.Once
 	closing   chan struct{}
 	closeOnce sync.Once
 	closeErr  error
@@ -40,8 +49,12 @@ type Client struct {
 // returns at once. It returns an error when the SDK key is blank, the connection URL is not
 // usable, the connection mode is unknown, or a duration or limit is out of range. Until the
 // first config state arrives every read returns its in-code default value; call WaitForReady to
-// wait for it.
+// wait for it, or attach an OnReady handler through Options.Hooks.
 func NewClient(options Options) (*Client, error) {
+	return newClient(options, newStubConnection())
+}
+
+func newClient(options Options, connection connection) (*Client, error) {
 	settings, err := settingsFrom(options)
 	if err != nil {
 		return nil, err
@@ -49,12 +62,26 @@ func NewClient(options Options) (*Client, error) {
 
 	client := &Client{
 		settings:   settings,
-		connection: newStubConnection(),
+		connection: connection,
+		watches:    newWatchList(),
 		ready:      make(chan struct{}),
 		closing:    make(chan struct{}),
 	}
+	client.attach(options.Hooks)
 	client.connection.open(client)
 	return client, nil
+}
+
+func (client *Client) attach(hooks Hooks) {
+	if hooks.OnReady != nil {
+		client.OnReady(hooks.OnReady)
+	}
+	if hooks.OnConfigsUpdated != nil {
+		client.OnConfigsUpdated(hooks.OnConfigsUpdated)
+	}
+	if hooks.OnConfigEvaluated != nil {
+		client.OnConfigEvaluated(hooks.OnConfigEvaluated)
+	}
 }
 
 // WaitForReady blocks until the first config state arrives, the connection timeout elapses, or
@@ -102,14 +129,18 @@ func (client *Client) Closed() bool {
 	return client.closed
 }
 
-// Close stops the connection and releases the client's goroutines. After Close the client is not
-// ready and every read returns its in-code default value. Calling Close more than once is
-// harmless and returns the first call's result.
+// Close stops the connection, cancels every handler and watch, and releases the client's
+// goroutines. After Close the client is not ready and every read returns its in-code default
+// value. Calling Close more than once is harmless and returns the first call's result.
 func (client *Client) Close() error {
 	client.closeOnce.Do(func() {
 		client.mutex.Lock()
 		client.closed = true
 		client.snapshot = nil
+		client.readyHandlers.clear()
+		client.updatedHandlers.clear()
+		client.evaluatedHandlers.clear()
+		client.watches.clear()
 		client.mutex.Unlock()
 
 		close(client.closing)
@@ -125,13 +156,32 @@ func (client *Client) receive(payload serverPayload) {
 		client.mutex.Unlock()
 		return
 	}
-	client.snapshot = client.snapshot.withPayload(payload)
+	previous := client.snapshot
+	snapshot := previous.withPayload(payload)
+	client.snapshot = snapshot
+	update := snapshot.changesFrom(previous, payload)
+	firstPayload := previous == nil
+	updatedHandlers := client.updatedHandlers.handlers()
+	affectedWatches := client.watches.affectedBy(update)
+	var readyHandlers []func(struct{})
+	if firstPayload {
+		readyHandlers = client.readyHandlers.drain()
+	}
 	client.mutex.Unlock()
 
-	client.readyOnce.Do(func() {
+	client.settings.logger.Debug(
+		"Received config state",
+		slog.Any("keys", update.Keys),
+		slog.Any("removedKeys", update.RemovedKeys),
+	)
+	emit(client, eventConfigsUpdated, updatedHandlers, update)
+	client.notifyWatches(affectedWatches, snapshot)
+
+	if firstPayload {
 		close(client.ready)
 		client.settings.logger.Debug("Received the first config state, the client is ready")
-	})
+		emit(client, eventReady, readyHandlers, struct{}{})
+	}
 }
 
 // BoolValue evaluates key as a boolean for userContext. It returns defaultValue when the config
@@ -202,19 +252,14 @@ func (client *Client) JSONValueDetails(key string, target any, userContext UserC
 		return EvaluationDetails{}, err
 	}
 
-	state, reason := client.readableState(key, userContext)
-	if reason == EvaluationReasonFoundMatch {
-		reason = decodeJSONInto(state, targetValue)
-	}
-	if reason != EvaluationReasonFoundMatch {
-		return defaultEvaluation(key, reason, userContext).details(), nil
-	}
-	return servedEvaluation(key, targetValue.Elem().Interface(), state.ValueID, userContext).details(), nil
+	snapshot, _ := client.heldSnapshot()
+	return client.evaluateJSONAndReport(snapshot, key, targetValue, userContext).details(), nil
 }
 
 // AllConfigs returns the evaluated state of every config the client holds, or of the configs
 // with the given keys, sorted by key. Intended for handing state to a client SDK to hydrate
-// with; it records no telemetry. Empty until the client is ready.
+// with; it records no telemetry and reaches no OnConfigEvaluated handler. Empty until the client
+// is ready.
 func (client *Client) AllConfigs(userContext UserContext, keys ...string) []ConfigState {
 	snapshot, ready := client.heldSnapshot()
 	if !ready {
@@ -227,21 +272,49 @@ func (client *Client) AllConfigs(userContext UserContext, keys ...string) []Conf
 }
 
 func readValue[T any](client *Client, key string, defaultValue T, userContext UserContext, valueFrom func(ConfigState) (T, EvaluationReason)) (T, EvaluationDetails) {
-	state, reason := client.readableState(key, userContext)
+	snapshot, _ := client.heldSnapshot()
+	value, evaluated := evaluateValueAndReport(client, snapshot, key, defaultValue, userContext, valueFrom)
+	return value, evaluated.details()
+}
+
+func evaluateValueAndReport[T any](client *Client, snapshot *configSnapshot, key string, defaultValue T, userContext UserContext, valueFrom func(ConfigState) (T, EvaluationReason)) (T, Evaluation) {
+	value, evaluated := evaluateValue(client, snapshot, key, defaultValue, userContext, valueFrom)
+	client.reportEvaluation(evaluated)
+	return value, evaluated
+}
+
+func evaluateValue[T any](client *Client, snapshot *configSnapshot, key string, defaultValue T, userContext UserContext, valueFrom func(ConfigState) (T, EvaluationReason)) (T, Evaluation) {
+	state, reason := client.readableState(snapshot, key, userContext)
 	if reason != EvaluationReasonFoundMatch {
-		return defaultValue, defaultEvaluation(key, reason, userContext).details()
+		return defaultValue, defaultEvaluation(key, defaultValue, reason, userContext)
 	}
 
 	value, reason := valueFrom(state)
 	if reason != EvaluationReasonFoundMatch {
-		return defaultValue, defaultEvaluation(key, reason, userContext).details()
+		return defaultValue, defaultEvaluation(key, defaultValue, reason, userContext)
 	}
-	return value, servedEvaluation(key, value, state.ValueID, userContext).details()
+	return value, servedEvaluation(key, value, state.ValueID, userContext)
 }
 
-func (client *Client) readableState(key string, userContext UserContext) (ConfigState, EvaluationReason) {
-	snapshot, ready := client.heldSnapshot()
-	if !ready {
+func (client *Client) evaluateJSONAndReport(snapshot *configSnapshot, key string, targetValue reflect.Value, userContext UserContext) Evaluation {
+	evaluated := client.evaluateJSON(snapshot, key, targetValue, userContext)
+	client.reportEvaluation(evaluated)
+	return evaluated
+}
+
+func (client *Client) evaluateJSON(snapshot *configSnapshot, key string, targetValue reflect.Value, userContext UserContext) Evaluation {
+	state, reason := client.readableState(snapshot, key, userContext)
+	if reason == EvaluationReasonFoundMatch {
+		reason = decodeJSONInto(state, targetValue)
+	}
+	if reason != EvaluationReasonFoundMatch {
+		return defaultEvaluation(key, targetValue.Elem().Interface(), reason, userContext)
+	}
+	return servedEvaluation(key, targetValue.Elem().Interface(), state.ValueID, userContext)
+}
+
+func (client *Client) readableState(snapshot *configSnapshot, key string, userContext UserContext) (ConfigState, EvaluationReason) {
+	if snapshot == nil {
 		return ConfigState{}, EvaluationReasonClientNotReady
 	}
 	state, found := snapshot.stateOf(key, client.evaluationContextFor(userContext))

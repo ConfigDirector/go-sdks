@@ -20,4 +20,15 @@
 //
 // Every read takes an in-code default value and returns it, rather than an error, when the
 // config cannot be read: the *ValueDetails methods say why.
+//
+// To act on config state as it changes, watch one key or register for the client's events:
+//
+//	unwatch := client.WatchBool("new-checkout", false, user, func(enabled bool) {
+//		// called with the new value whenever the config changes
+//	})
+//	defer unwatch()
+//
+//	client.OnConfigsUpdated(func(update configdirector.ConfigsUpdated) {
+//		log.Printf("configs updated: %v", update.Keys)
+//	})
 package configdirector

@@ -44,14 +44,14 @@ func (handler *recordingHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 
 func (handler *recordingHandler) WithGroup(string) slog.Handler { return handler }
 
-func warningsIn(records []slog.Record) []slog.Record {
-	var warnings []slog.Record
+func recordsAt(level slog.Level, records []slog.Record) []slog.Record {
+	var matching []slog.Record
 	for _, record := range records {
-		if record.Level == slog.LevelWarn {
-			warnings = append(warnings, record)
+		if record.Level == level {
+			matching = append(matching, record)
 		}
 	}
-	return warnings
+	return matching
 }
 
 func attributesOf(record slog.Record) map[string]any {
@@ -83,7 +83,7 @@ func TestNewClientAcceptsEveryOption(t *testing.T) {
 	})
 
 	waitForReady(t, client)
-	require.Empty(t, warningsIn(records()))
+	require.Empty(t, recordsAt(slog.LevelWarn, records()))
 }
 
 func TestNewClientRejectsABlankSDKKey(t *testing.T) {
@@ -198,7 +198,7 @@ func TestNewClientRaisesAPollingIntervalBelowTheMinimumWithOneWarning(t *testing
 		Logger:     logger,
 	})
 
-	warnings := warningsIn(records())
+	warnings := recordsAt(slog.LevelWarn, records())
 	require.Len(t, warnings, 1)
 	require.Equal(t, 30*time.Second, attributesOf(warnings[0])["configured"])
 	require.Equal(t, time.Minute, attributesOf(warnings[0])["used"])
@@ -214,7 +214,7 @@ func TestNewClientTagsEveryLogRecordWithTheComponent(t *testing.T) {
 		Logger:     logger,
 	})
 
-	require.Equal(t, "configdirector", attributesOf(warningsIn(records())[0])["component"])
+	require.Equal(t, "configdirector", attributesOf(recordsAt(slog.LevelWarn, records())[0])["component"])
 }
 
 func TestNewClientKeepsAPollingIntervalAtTheMinimumWithoutAWarning(t *testing.T) {
@@ -227,7 +227,7 @@ func TestNewClientKeepsAPollingIntervalAtTheMinimumWithoutAWarning(t *testing.T)
 		Logger:     logger,
 	})
 
-	require.Empty(t, warningsIn(records()))
+	require.Empty(t, recordsAt(slog.LevelWarn, records()))
 }
 
 func TestNewClientIgnoresAShortPollingIntervalWhenStreaming(t *testing.T) {
@@ -240,7 +240,7 @@ func TestNewClientIgnoresAShortPollingIntervalWhenStreaming(t *testing.T) {
 		Logger:     logger,
 	})
 
-	require.Empty(t, warningsIn(records()))
+	require.Empty(t, recordsAt(slog.LevelWarn, records()))
 }
 
 func TestAWaitThatEndsBeforeTheFirstConfigStateIsLoggedAsAWarning(t *testing.T) {
@@ -252,5 +252,5 @@ func TestAWaitThatEndsBeforeTheFirstConfigStateIsLoggedAsAWarning(t *testing.T) 
 
 	require.Error(t, client.WaitForReady(ctx))
 
-	require.Len(t, warningsIn(records()), 1)
+	require.Len(t, recordsAt(slog.LevelWarn, records()), 1)
 }

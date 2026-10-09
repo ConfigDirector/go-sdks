@@ -94,10 +94,6 @@ type TelemetryOptions struct {
 	FlushInterval time.Duration
 }
 
-// Hooks holds event handlers attached when a client is created, before it can emit any event.
-// The client emits no events yet, so it has no fields.
-type Hooks struct{}
-
 const (
 	defaultURL               = "https://server-sdk-api.configdirector.com"
 	defaultPollingInterval   = 5 * time.Minute

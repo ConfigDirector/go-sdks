@@ -30,3 +30,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   or of the given keys, sorted by key.
 - The connection is a built-in stand-in that serves a fixed set of configs until the transports
   land.
+- Events. `Options.Hooks` takes `OnReady`, `OnConfigsUpdated` and `OnConfigEvaluated` handlers at
+  construction, so the ready event cannot be missed; `Client.OnReady`, `Client.OnConfigsUpdated`
+  and `Client.OnConfigEvaluated` register the same afterwards and return an unsubscribe func. An
+  `OnReady` handler registered once the client is ready is called at once. `ConfigsUpdated`
+  carries the `Keys` an update touched, the configs whose targeting rules use a segment it
+  carried included, and the `RemovedKeys` a full update dropped. `Evaluation` (`Key`, `Value`,
+  `UsedDefault`, `Reason`, `ValueID`, `UserContext`) describes every read and every watch that
+  fires.
+- Watches. `Client.WatchBool`, `WatchString`, `WatchInt`, `WatchFloat` and `WatchJSON` call a
+  handler with the newly evaluated value of one key for one user context whenever an update
+  carries the key or a segment its rules use, and with the in-code default value when a full
+  update drops the key. Each returns an unsubscribe func; `UnwatchAll` cancels every watch.
+- Handlers run on the connection's goroutine. A panic in a handler is recovered and logged at
+  error level, and the other handlers and the connection continue. `Close` cancels every handler
+  and watch.

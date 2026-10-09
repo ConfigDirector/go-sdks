@@ -51,6 +51,24 @@ func (snapshot *configSnapshot) keys() []string {
 	return slices.Sorted(maps.Keys(snapshot.configs))
 }
 
+func (snapshot *configSnapshot) changesFrom(previous *configSnapshot, payload serverPayload) ConfigsUpdated {
+	updated := ConfigsUpdated{Keys: []string{}, RemovedKeys: []string{}}
+	for _, key := range snapshot.keys() {
+		_, carried := payload.configs[key]
+		if carried || snapshot.configs[key].usesAnySegment(payload.segments) {
+			updated.Keys = append(updated.Keys, key)
+		}
+	}
+	if previous != nil {
+		for _, key := range previous.keys() {
+			if _, held := snapshot.configs[key]; !held {
+				updated.RemovedKeys = append(updated.RemovedKeys, key)
+			}
+		}
+	}
+	return updated
+}
+
 func (definition configDefinition) evaluatedFor(context evaluation.EvaluationContext, segments evaluation.Segments) ConfigState {
 	config := evaluation.Config{ID: definition.id, TargetingRules: definition.targetingRules}
 	served := evaluation.Evaluate(config, context, segments)
@@ -61,4 +79,17 @@ func (definition configDefinition) evaluatedFor(context evaluation.EvaluationCon
 		Value:   served.Text,
 		ValueID: served.ValueID,
 	}
+}
+
+func (definition configDefinition) usesAnySegment(segments evaluation.Segments) bool {
+	for _, rule := range definition.targetingRules.Rules {
+		for _, condition := range rule.Conditions {
+			if segmentCondition, isSegment := condition.(evaluation.SegmentCondition); isSegment {
+				if _, carried := segments[segmentCondition.SegmentID]; carried {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
