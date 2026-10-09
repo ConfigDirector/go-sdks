@@ -13,7 +13,7 @@ Each module has its own changelog, version, and release. Pick the server SDK to 
 
 ## Sample apps
 
-Small, runnable applications will live under `samples/`, grouped by the module they demonstrate, starting with the first SDK release.
+Small, runnable applications live under [`samples/`](samples/), grouped by the module they demonstrate. Start with the [Gin sample](samples/configdirector/gin/) for the server SDK.
 
 ## Getting Help
 

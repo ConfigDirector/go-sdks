@@ -20,21 +20,27 @@ changelog, and release. Once the provider imports the SDK, its `go.mod` must req
 version of the SDK from the module proxy, never this working tree, because `go mod tidy` ignores
 `go.work`.
 
-`samples/` is reserved for sample applications. They are modules outside the workspace and depend
-on released versions, the way an application does.
+[samples/](samples/) holds sample applications, one module per framework under
+`samples/<module>/<framework>`. They are modules outside the workspace and depend on the SDK the
+way an application does. Until the first SDK release is tagged, each sample's `go.mod` reaches the
+SDK in this working tree through a `replace` directive, which the release swaps for the released
+version. Either way, `make samples-local` lints and tests every sample against the modules in this
+working tree, through a throwaway workspace it writes under `.tools/`, so a breaking API change
+fails before it ships. Add a new sample to `SAMPLES` in the Makefile.
 
 ## Working on the modules
 
 ```sh
-make hooks     # pre-push hook that runs make check-all
-make check     # lint and test: the fast loop
-make check-all # everything CI runs
+make hooks         # pre-push hook that runs make check-all
+make check         # lint and test: the fast loop
+make samples-local # the sample apps against this working tree
+make check-all     # everything CI runs
 ```
 
 `make lint` runs `gofmt`, `go vet` and `golangci-lint`, installing the version the Makefile pins
-under `.tools/` the first time. `make format` formats every module. `make test-race` runs the tests
-with the race detector, as CI does, and `make verify-tidy` fails when a module's `go.mod` or
-`go.sum` differs from what `go mod tidy` would write.
+under `.tools/` the first time. `make format` formats every module and sample. `make test-race` runs the tests
+with the race detector, as CI does, and `make verify-tidy` fails when a module's or a sample's
+`go.mod` or `go.sum` differs from what `go mod tidy` would write.
 
 The checks live in the [Makefile](Makefile). CI and the pre-push hook only call `make` targets,
 so add new checks there rather than in either of them.

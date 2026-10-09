@@ -55,3 +55,19 @@ jobs:
           cache-dependency-path: "**/go.sum"
 
       - run: make test-race
+
+  samples:
+    name: Sample apps
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+          cache-dependency-path: "**/go.sum"
+
+      # Each sample is a module outside go.work. This checks them against the modules in this
+      # working tree, which is what catches a breaking API change before it ships.
+      - run: make samples-local
