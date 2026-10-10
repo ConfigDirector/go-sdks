@@ -2,9 +2,7 @@ package configdirector_test
 
 import (
 	"log/slog"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/ConfigDirector/go-sdks/configdirector"
 	"github.com/stretchr/testify/require"
@@ -14,94 +12,58 @@ const betaSegmentID = "segment-beta"
 
 var betaUser = configdirector.UserContext{ID: "u-1", Traits: map[string]any{"plan": "beta"}}
 
-func newClientWithTestConnection(t *testing.T, options configdirector.Options) (*configdirector.Client, *configdirector.TestConnection) {
+func newReadyClientAgainst(t *testing.T, initialPayload payloadBuilder) (*configdirector.Client, *sdkServer) {
 	t.Helper()
-	client, connection, err := configdirector.NewClientWithTestConnection(options)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, client.Close()) })
-	return client, connection
+	server := startSDKServer(t, initialPayload.json())
+	client := newClientAgainst(t, server)
+	waitForReady(t, client)
+	return client, server
 }
 
-func newDefaultClientWithTestConnection(t *testing.T) (*configdirector.Client, *configdirector.TestConnection) {
+func newLoggedClient(t *testing.T, server *sdkServer) (*configdirector.Client, func() []slog.Record) {
 	t.Helper()
-	return newClientWithTestConnection(t, configdirector.Options{SDKKey: testSDKKey})
-}
-
-type recorder[T any] struct {
-	mutex    sync.Mutex
-	received []T
-}
-
-func (recorder *recorder[T]) record(value T) {
-	recorder.mutex.Lock()
-	defer recorder.mutex.Unlock()
-	recorder.received = append(recorder.received, value)
-}
-
-func (recorder *recorder[T]) all() []T {
-	recorder.mutex.Lock()
-	defer recorder.mutex.Unlock()
-	return append([]T{}, recorder.received...)
-}
-
-func awaitSignal(t *testing.T, signal <-chan struct{}) {
-	t.Helper()
-	select {
-	case <-signal:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the handler was not called within 5 seconds")
-	}
-}
-
-func recoveringPanics(t *testing.T, deliver func()) {
-	t.Helper()
-	done := make(chan any, 1)
-	go func() {
-		defer func() { done <- recover() }()
-		deliver()
-	}()
-	require.Nil(t, <-done, "a panic escaped the client")
+	logger, records := newLogger()
+	options := server.options()
+	options.Logger = logger
+	return newClient(t, options), records
 }
 
 func TestAReadyHookInOptionsSeesTheReadyEvent(t *testing.T) {
 	t.Parallel()
 	ready := make(chan struct{})
-	client := newClient(t, configdirector.Options{
-		SDKKey: testSDKKey,
-		Hooks:  configdirector.Hooks{OnReady: func() { close(ready) }},
-	})
+	options := startSDKServer(t, standardPayload().json()).options()
+	options.Hooks = configdirector.Hooks{OnReady: func() { close(ready) }}
+	client := newClient(t, options)
 
-	awaitSignal(t, ready)
+	await(t, ready)
 
 	require.True(t, client.Ready())
 }
 
 func TestAConfigsUpdatedHookInOptionsSeesTheFirstConfigState(t *testing.T) {
 	t.Parallel()
-	updates := &recorder[configdirector.ConfigsUpdated]{}
-	_, connection := newClientWithTestConnection(t, configdirector.Options{
-		SDKKey: testSDKKey,
-		Hooks:  configdirector.Hooks{OnConfigsUpdated: updates.record},
-	})
+	updates := newRecorder[configdirector.ConfigsUpdated]()
+	options := startSDKServer(t, fullPayload(textConfig("b", "2"), textConfig("a", "1")).json()).options()
+	options.Hooks = configdirector.Hooks{OnConfigsUpdated: updates.record}
 
-	connection.Deliver(configdirector.FullUpdate(configdirector.TextConfig("b", "2"), configdirector.TextConfig("a", "1")))
+	newClient(t, options)
 
-	require.Equal(t, []configdirector.ConfigsUpdated{{Keys: []string{"a", "b"}, RemovedKeys: []string{}}}, updates.all())
+	require.Equal(t, configdirector.ConfigsUpdated{Keys: []string{"a", "b"}, RemovedKeys: []string{}}, updates.next(t))
 }
 
 func TestAConfigEvaluatedHookInOptionsSeesReads(t *testing.T) {
 	t.Parallel()
-	evaluations := &recorder[configdirector.Evaluation]{}
-	client, connection := newClientWithTestConnection(t, configdirector.Options{
-		SDKKey: testSDKKey,
-		Hooks:  configdirector.Hooks{OnConfigEvaluated: evaluations.record},
-	})
-	connection.Deliver(configdirector.FullUpdate(configdirector.TextConfig("welcome", "Hi")))
+	evaluations := newRecorder[configdirector.Evaluation]()
+	options := startSDKServer(t, fullPayload(textConfig("welcome", "Hi")).json()).options()
+	options.Hooks = configdirector.Hooks{OnConfigEvaluated: evaluations.record}
+	client := newClient(t, options)
+	waitForReady(t, client)
 
 	client.StringValue("welcome", "fallback", noUser)
 
-	require.Len(t, evaluations.all(), 1)
-	require.Equal(t, "welcome", evaluations.all()[0].Key)
+	evaluated := evaluations.received()
+	require.Len(t, evaluated, 1)
+	require.Equal(t, "welcome", evaluated[0].Key)
 }
 
 func TestAnOnReadyRegisteredAfterReadinessIsCalledAtOnce(t *testing.T) {
@@ -116,14 +78,20 @@ func TestAnOnReadyRegisteredAfterReadinessIsCalledAtOnce(t *testing.T) {
 
 func TestOnReadyIsCalledOnceWhenTheFirstConfigStateArrives(t *testing.T) {
 	t.Parallel()
-	client, connection := newDefaultClientWithTestConnection(t)
-	calls := &recorder[bool]{}
+	server := startSDKServer(t)
+	client := newClientAgainst(t, server)
+	calls := newRecorder[bool]()
 	client.OnReady(func() { calls.record(client.Ready()) })
+	updates := newRecorder[configdirector.ConfigsUpdated]()
+	client.OnConfigsUpdated(updates.record)
+	await(t, server.requests)
 
-	connection.Deliver(configdirector.FullUpdate(configdirector.TextConfig("a", "1")))
-	connection.Deliver(configdirector.FullUpdate(configdirector.TextConfig("a", "2")))
+	server.send(fullPayload(textConfig("a", "1")).json())
+	server.send(fullPayload(textConfig("a", "2")).json())
 
-	require.Equal(t, []bool{true}, calls.all())
+	updates.next(t)
+	updates.next(t)
+	require.Equal(t, []bool{true}, calls.received())
 }
 
 func TestOnReadyAfterCloseNeverCallsTheHandler(t *testing.T) {
@@ -139,197 +107,211 @@ func TestOnReadyAfterCloseNeverCallsTheHandler(t *testing.T) {
 
 func TestADeltaUpdateReportsTheKeysItCarries(t *testing.T) {
 	t.Parallel()
-	client, connection := newDefaultClientWithTestConnection(t)
-	connection.Deliver(configdirector.FullUpdate(configdirector.TextConfig("a", "1"), configdirector.TextConfig("b", "2")))
-	updates := &recorder[configdirector.ConfigsUpdated]{}
+	client, server := newReadyClientAgainst(t, fullPayload(textConfig("a", "1"), textConfig("b", "2")))
+	updates := newRecorder[configdirector.ConfigsUpdated]()
 	client.OnConfigsUpdated(updates.record)
 
-	connection.Deliver(configdirector.DeltaUpdate(configdirector.TextConfig("c", "3"), configdirector.TextConfig("b", "20")))
+	server.send(deltaPayload(textConfig("c", "3"), textConfig("b", "20")).json())
 
-	require.Equal(t, []configdirector.ConfigsUpdated{{Keys: []string{"b", "c"}, RemovedKeys: []string{}}}, updates.all())
+	require.Equal(t, configdirector.ConfigsUpdated{Keys: []string{"b", "c"}, RemovedKeys: []string{}}, updates.next(t))
+}
+
+func TestADeltaUpdateAddsAConfigAndFiresItsWatch(t *testing.T) {
+	t.Parallel()
+	client, server := newReadyClientAgainst(t, fullPayload(textConfig("a", "1")))
+	values := newRecorder[string]()
+	client.WatchString("c", "fallback", noUser, values.record)
+
+	server.send(deltaPayload(textConfig("c", "3")).json())
+
+	require.Equal(t, "3", values.next(t))
+	require.Equal(t, "3", client.StringValue("c", "fallback", noUser))
+	require.Equal(t, "1", client.StringValue("a", "fallback", noUser))
 }
 
 func TestAFullUpdateThatDropsAKeyReportsItRemoved(t *testing.T) {
 	t.Parallel()
-	client, connection := newDefaultClientWithTestConnection(t)
-	connection.Deliver(configdirector.FullUpdate(configdirector.TextConfig("a", "1"), configdirector.TextConfig("b", "2")))
-	updates := &recorder[configdirector.ConfigsUpdated]{}
+	client, server := newReadyClientAgainst(t, fullPayload(textConfig("a", "1"), textConfig("b", "2")))
+	updates := newRecorder[configdirector.ConfigsUpdated]()
 	client.OnConfigsUpdated(updates.record)
 
-	connection.Deliver(configdirector.FullUpdate(configdirector.TextConfig("a", "1")))
+	server.send(fullPayload(textConfig("a", "1")).json())
 
-	require.Equal(t, []configdirector.ConfigsUpdated{{Keys: []string{"a"}, RemovedKeys: []string{"b"}}}, updates.all())
+	require.Equal(t, configdirector.ConfigsUpdated{Keys: []string{"a"}, RemovedKeys: []string{"b"}}, updates.next(t))
+	require.Equal(t, "fallback", client.StringValue("b", "fallback", noUser))
 }
 
 func TestAFullUpdateThatDropsAKeyFiresItsWatchWithTheDefault(t *testing.T) {
 	t.Parallel()
-	client, connection := newDefaultClientWithTestConnection(t)
-	connection.Deliver(configdirector.FullUpdate(configdirector.TextConfig("a", "1"), configdirector.TextConfig("b", "2")))
-	values := &recorder[string]{}
+	client, server := newReadyClientAgainst(t, fullPayload(textConfig("a", "1"), textConfig("b", "2")))
+	values := newRecorder[string]()
 	client.WatchString("b", "fallback", noUser, values.record)
 
-	connection.Deliver(configdirector.FullUpdate(configdirector.TextConfig("a", "1")))
+	server.send(fullPayload(textConfig("a", "1")).json())
 
-	require.Equal(t, []string{"fallback"}, values.all())
+	require.Equal(t, "fallback", values.next(t))
 }
 
 func TestASegmentUpdateFiresTheWatchOfAConfigWhoseRulesUseIt(t *testing.T) {
 	t.Parallel()
-	client, connection := newDefaultClientWithTestConnection(t)
-	connection.Deliver(configdirector.WithSegment(configdirector.FullUpdate(configdirector.BoolConfigTrueInSegment("beta-banner", betaSegmentID)), betaSegmentID, "gold"))
-	values := &recorder[bool]{}
+	client, server := newReadyClientAgainst(t, fullPayload(boolConfigTrueInSegment("beta-banner", betaSegmentID)).withSegment(betaSegmentID, "gold"))
+	values := newRecorder[bool]()
 	client.WatchBool("beta-banner", false, betaUser, values.record)
 
-	connection.Deliver(configdirector.WithSegment(configdirector.DeltaUpdate(), betaSegmentID, "beta"))
+	server.send(deltaPayload().withSegment(betaSegmentID, "beta").json())
 
-	require.Equal(t, []bool{true}, values.all())
+	require.True(t, values.next(t))
+	require.True(t, client.BoolValue("beta-banner", false, betaUser))
 }
 
 func TestASegmentUpdateReportsTheKeysWhoseRulesUseIt(t *testing.T) {
 	t.Parallel()
-	client, connection := newDefaultClientWithTestConnection(t)
-	connection.Deliver(configdirector.WithSegment(configdirector.FullUpdate(
-		configdirector.BoolConfigTrueInSegment("beta-banner", betaSegmentID),
-		configdirector.TextConfig("unrelated", "1"),
-	), betaSegmentID, "gold"))
-	updates := &recorder[configdirector.ConfigsUpdated]{}
+	client, server := newReadyClientAgainst(t, fullPayload(
+		boolConfigTrueInSegment("beta-banner", betaSegmentID),
+		textConfig("unrelated", "1"),
+	).withSegment(betaSegmentID, "gold"))
+	updates := newRecorder[configdirector.ConfigsUpdated]()
 	client.OnConfigsUpdated(updates.record)
 
-	connection.Deliver(configdirector.WithSegment(configdirector.DeltaUpdate(), betaSegmentID, "beta"))
+	server.send(deltaPayload().withSegment(betaSegmentID, "beta").json())
 
-	require.Equal(t, []configdirector.ConfigsUpdated{{Keys: []string{"beta-banner"}, RemovedKeys: []string{}}}, updates.all())
+	require.Equal(t, configdirector.ConfigsUpdated{Keys: []string{"beta-banner"}, RemovedKeys: []string{}}, updates.next(t))
 }
 
 func TestAWatchDoesNotFireForAnUpdateThatDoesNotCarryItsKey(t *testing.T) {
 	t.Parallel()
-	client, connection := newDefaultClientWithTestConnection(t)
-	connection.Deliver(configdirector.FullUpdate(configdirector.TextConfig("a", "1")))
-	values := &recorder[string]{}
+	client, server := newReadyClientAgainst(t, fullPayload(textConfig("a", "1")))
+	values := newRecorder[string]()
 	client.WatchString("a", "fallback", noUser, values.record)
 
-	connection.Deliver(configdirector.DeltaUpdate(configdirector.TextConfig("b", "2")))
+	server.send(deltaPayload(textConfig("b", "2")).json())
+	server.send(deltaPayload(textConfig("a", "10")).json())
 
-	require.Empty(t, values.all())
+	require.Equal(t, "10", values.next(t))
+	require.Empty(t, values.received())
 }
 
 func TestWatchBoolFiresWithTheEvaluatedValue(t *testing.T) {
 	t.Parallel()
-	client, connection := newDefaultClientWithTestConnection(t)
-	values := &recorder[bool]{}
+	client, server := newReadyClientAgainst(t, fullPayload())
+	values := newRecorder[bool]()
 	client.WatchBool("flag", false, noUser, values.record)
 
-	connection.Deliver(configdirector.FullUpdate(configdirector.BoolConfig("flag", "true")))
+	server.send(fullPayload(boolConfig("flag", "true")).json())
 
-	require.Equal(t, []bool{true}, values.all())
+	require.True(t, values.next(t))
 }
 
 func TestWatchStringFiresWithTheEvaluatedValue(t *testing.T) {
 	t.Parallel()
-	client, connection := newDefaultClientWithTestConnection(t)
-	values := &recorder[string]{}
+	client, server := newReadyClientAgainst(t, fullPayload())
+	values := newRecorder[string]()
 	client.WatchString("greeting", "fallback", noUser, values.record)
 
-	connection.Deliver(configdirector.FullUpdate(configdirector.TextConfig("greeting", "Hello")))
+	server.send(fullPayload(textConfig("greeting", "Hello")).json())
 
-	require.Equal(t, []string{"Hello"}, values.all())
+	require.Equal(t, "Hello", values.next(t))
 }
 
 func TestWatchIntFiresWithTheEvaluatedValue(t *testing.T) {
 	t.Parallel()
-	client, connection := newDefaultClientWithTestConnection(t)
-	values := &recorder[int64]{}
+	client, server := newReadyClientAgainst(t, fullPayload())
+	values := newRecorder[int64]()
 	client.WatchInt("max-items", 1, noUser, values.record)
 
-	connection.Deliver(configdirector.FullUpdate(configdirector.IntConfig("max-items", "26")))
+	server.send(fullPayload(intConfig("max-items", "26")).json())
 
-	require.Equal(t, []int64{26}, values.all())
+	require.Equal(t, int64(26), values.next(t))
 }
 
 func TestWatchFloatFiresWithTheEvaluatedValue(t *testing.T) {
 	t.Parallel()
-	client, connection := newDefaultClientWithTestConnection(t)
-	values := &recorder[float64]{}
+	client, server := newReadyClientAgainst(t, fullPayload())
+	values := newRecorder[float64]()
 	client.WatchFloat("multiplier", 1, noUser, values.record)
 
-	connection.Deliver(configdirector.FullUpdate(configdirector.FloatConfig("multiplier", "1.5")))
+	server.send(fullPayload(floatConfig("multiplier", "1.5")).json())
 
-	require.Equal(t, []float64{1.5}, values.all())
+	require.InDelta(t, 1.5, values.next(t), 0)
 }
 
 func TestWatchJSONFiresWithTheDecodedTarget(t *testing.T) {
 	t.Parallel()
-	client, connection := newDefaultClientWithTestConnection(t)
-	values := &recorder[limits]{}
+	client, server := newReadyClientAgainst(t, fullPayload())
+	values := newRecorder[limits]()
 	client.WatchJSON("limits", func() any { return &limits{Max: 5, Min: 5} }, noUser, func(target any) { values.record(*target.(*limits)) })
 
-	connection.Deliver(configdirector.FullUpdate(configdirector.JSONConfig("limits", `{"max":20,"min":1}`)))
+	server.send(fullPayload(jsonConfig("limits", `{"max":20,"min":1}`)).json())
 
-	require.Equal(t, []limits{{Max: 20, Min: 1}}, values.all())
+	require.Equal(t, limits{Max: 20, Min: 1}, values.next(t))
 }
 
 func TestWatchJSONFiresWithTheDefaultTargetOnMalformedJSON(t *testing.T) {
 	t.Parallel()
-	client, connection := newDefaultClientWithTestConnection(t)
-	values := &recorder[limits]{}
+	client, server := newReadyClientAgainst(t, fullPayload())
+	values := newRecorder[limits]()
 	client.WatchJSON("limits", func() any { return &limits{Max: 5, Min: 5} }, noUser, func(target any) { values.record(*target.(*limits)) })
 
-	connection.Deliver(configdirector.FullUpdate(configdirector.JSONConfig("limits", "{not json")))
+	server.send(fullPayload(jsonConfig("limits", "{not json")).json())
 
-	require.Equal(t, []limits{{Max: 5, Min: 5}}, values.all())
+	require.Equal(t, limits{Max: 5, Min: 5}, values.next(t))
 }
 
 func TestWatchJSONLogsAnErrorAndSkipsTheHandlerWhenTheTargetIsNotAPointer(t *testing.T) {
 	t.Parallel()
-	logger, records := newLogger()
-	client, connection := newClientWithTestConnection(t, configdirector.Options{SDKKey: testSDKKey, Logger: logger})
-	values := &recorder[any]{}
+	server := startSDKServer(t, fullPayload().json())
+	client, records := newLoggedClient(t, server)
+	waitForReady(t, client)
+	values := newRecorder[any]()
 	client.WatchJSON("limits", func() any { return limits{} }, noUser, values.record)
+	updates := newRecorder[configdirector.ConfigsUpdated]()
+	client.OnConfigsUpdated(updates.record)
 
-	connection.Deliver(configdirector.FullUpdate(configdirector.JSONConfig("limits", `{"max":20,"min":1}`)))
+	server.send(fullPayload(jsonConfig("limits", `{"max":20,"min":1}`)).json())
 
-	require.Empty(t, values.all())
+	updates.next(t)
+	require.Empty(t, values.received())
 	require.Len(t, recordsAt(slog.LevelError, records()), 1)
 	require.Equal(t, "limits", attributesOf(recordsAt(slog.LevelError, records())[0])["key"])
 }
 
 func TestAWatchEvaluatesForItsOwnUserContext(t *testing.T) {
 	t.Parallel()
-	client, connection := newDefaultClientWithTestConnection(t)
-	connection.Deliver(configdirector.WithSegment(configdirector.FullUpdate(configdirector.BoolConfigTrueInSegment("beta-banner", betaSegmentID)), betaSegmentID, "beta"))
-	betaValues := &recorder[bool]{}
-	otherValues := &recorder[bool]{}
+	client, server := newReadyClientAgainst(t, fullPayload(boolConfigTrueInSegment("beta-banner", betaSegmentID)).withSegment(betaSegmentID, "beta"))
+	betaValues := newRecorder[bool]()
+	otherValues := newRecorder[bool]()
 	client.WatchBool("beta-banner", false, betaUser, betaValues.record)
 	client.WatchBool("beta-banner", false, configdirector.UserContext{ID: "u-2", Traits: map[string]any{"plan": "free"}}, otherValues.record)
 
-	connection.Deliver(configdirector.DeltaUpdate(configdirector.BoolConfigTrueInSegment("beta-banner", betaSegmentID)))
+	server.send(deltaPayload(boolConfigTrueInSegment("beta-banner", betaSegmentID)).json())
 
-	require.Equal(t, []bool{true}, betaValues.all())
-	require.Equal(t, []bool{false}, otherValues.all())
+	require.True(t, betaValues.next(t))
+	require.False(t, otherValues.next(t))
 }
 
 func TestAWatchNotificationFiresOnConfigEvaluated(t *testing.T) {
 	t.Parallel()
-	client, connection := newDefaultClientWithTestConnection(t)
-	evaluations := &recorder[configdirector.Evaluation]{}
+	client, server := newReadyClientAgainst(t, fullPayload())
+	evaluations := newRecorder[configdirector.Evaluation]()
 	client.OnConfigEvaluated(evaluations.record)
 	client.WatchString("greeting", "fallback", noUser, func(string) {})
 
-	connection.Deliver(configdirector.FullUpdate(configdirector.TextConfig("greeting", "Hello")))
+	server.send(fullPayload(textConfig("greeting", "Hello")).json())
 
-	require.Equal(t, []configdirector.Evaluation{{
+	require.Equal(t, configdirector.Evaluation{
 		Key:         "greeting",
 		Value:       "Hello",
 		UsedDefault: false,
 		Reason:      configdirector.EvaluationReasonFoundMatch,
 		ValueID:     "value-greeting-default",
 		UserContext: noUser,
-	}}, evaluations.all())
+	}, evaluations.next(t))
 }
 
 func TestAServedReadFiresOnConfigEvaluatedWithTheDetailsItReturns(t *testing.T) {
 	t.Parallel()
 	client := newReadyClient(t)
-	evaluations := &recorder[configdirector.Evaluation]{}
+	evaluations := newRecorder[configdirector.Evaluation]()
 	client.OnConfigEvaluated(evaluations.record)
 	user := configdirector.UserContext{ID: "u-pro"}
 
@@ -342,7 +324,7 @@ func TestAServedReadFiresOnConfigEvaluatedWithTheDetailsItReturns(t *testing.T) 
 		Reason:      configdirector.EvaluationReasonFoundMatch,
 		ValueID:     "value-greeting-pro",
 		UserContext: user,
-	}}, evaluations.all())
+	}}, evaluations.received())
 	require.Equal(t, "Hello, pro", value)
 	require.Equal(t, foundMatch("value-greeting-pro"), details)
 }
@@ -350,7 +332,7 @@ func TestAServedReadFiresOnConfigEvaluatedWithTheDetailsItReturns(t *testing.T) 
 func TestADefaultedReadFiresOnConfigEvaluatedWithTheDetailsItReturns(t *testing.T) {
 	t.Parallel()
 	client := newReadyClient(t)
-	evaluations := &recorder[configdirector.Evaluation]{}
+	evaluations := newRecorder[configdirector.Evaluation]()
 	client.OnConfigEvaluated(evaluations.record)
 
 	value, details := client.BoolValueDetails("not-a-boolean", true, noUser)
@@ -362,7 +344,7 @@ func TestADefaultedReadFiresOnConfigEvaluatedWithTheDetailsItReturns(t *testing.
 		Reason:      configdirector.EvaluationReasonInvalidBoolean,
 		ValueID:     "",
 		UserContext: noUser,
-	}}, evaluations.all())
+	}}, evaluations.received())
 	require.True(t, value)
 	require.Equal(t, usedDefault(configdirector.EvaluationReasonInvalidBoolean), details)
 }
@@ -370,42 +352,46 @@ func TestADefaultedReadFiresOnConfigEvaluatedWithTheDetailsItReturns(t *testing.
 func TestAJSONReadFiresOnConfigEvaluatedWithTheDecodedValue(t *testing.T) {
 	t.Parallel()
 	client := newReadyClient(t)
-	evaluations := &recorder[configdirector.Evaluation]{}
+	evaluations := newRecorder[configdirector.Evaluation]()
 	client.OnConfigEvaluated(evaluations.record)
 	target := limits{}
 
 	require.NoError(t, client.JSONValue("limits", &target, noUser))
 
-	require.Len(t, evaluations.all(), 1)
-	require.Equal(t, limits{Max: 20, Min: 1}, evaluations.all()[0].Value)
-	require.Equal(t, configdirector.EvaluationReasonFoundMatch, evaluations.all()[0].Reason)
+	evaluated := evaluations.received()
+	require.Len(t, evaluated, 1)
+	require.Equal(t, limits{Max: 20, Min: 1}, evaluated[0].Value)
+	require.Equal(t, configdirector.EvaluationReasonFoundMatch, evaluated[0].Reason)
 }
 
 func TestAReadBeforeReadyFiresOnConfigEvaluatedWithClientNotReady(t *testing.T) {
 	t.Parallel()
-	client, _ := newDefaultClientWithTestConnection(t)
-	evaluations := &recorder[configdirector.Evaluation]{}
+	client := newClientAgainst(t, startSDKServer(t))
+	evaluations := newRecorder[configdirector.Evaluation]()
 	client.OnConfigEvaluated(evaluations.record)
 
 	client.IntValue("max-items", 7, noUser)
 
-	require.Len(t, evaluations.all(), 1)
-	require.Equal(t, configdirector.EvaluationReasonClientNotReady, evaluations.all()[0].Reason)
-	require.Equal(t, int64(7), evaluations.all()[0].Value)
+	evaluated := evaluations.received()
+	require.Len(t, evaluated, 1)
+	require.Equal(t, configdirector.EvaluationReasonClientNotReady, evaluated[0].Reason)
+	require.Equal(t, int64(7), evaluated[0].Value)
 }
 
 func TestAPanickingHandlerIsLoggedAndTheNextUpdateStillReachesOtherHandlers(t *testing.T) {
 	t.Parallel()
-	logger, records := newLogger()
-	client, connection := newClientWithTestConnection(t, configdirector.Options{SDKKey: testSDKKey, Logger: logger})
+	server := startSDKServer(t)
+	client, records := newLoggedClient(t, server)
 	client.OnConfigsUpdated(func(configdirector.ConfigsUpdated) { panic("handler failure") })
-	updates := &recorder[configdirector.ConfigsUpdated]{}
+	updates := newRecorder[configdirector.ConfigsUpdated]()
 	client.OnConfigsUpdated(updates.record)
+	await(t, server.requests)
 
-	recoveringPanics(t, func() { connection.Deliver(configdirector.FullUpdate(configdirector.TextConfig("a", "1"))) })
-	recoveringPanics(t, func() { connection.Deliver(configdirector.DeltaUpdate(configdirector.TextConfig("a", "2"))) })
+	server.send(fullPayload(textConfig("a", "1")).json())
+	server.send(deltaPayload(textConfig("a", "2")).json())
 
-	require.Len(t, updates.all(), 2)
+	updates.next(t)
+	updates.next(t)
 	require.Len(t, recordsAt(slog.LevelError, records()), 2)
 	require.Equal(t, "configs-updated", attributesOf(recordsAt(slog.LevelError, records())[0])["event"])
 	require.Equal(t, "handler failure", attributesOf(recordsAt(slog.LevelError, records())[0])["panic"])
@@ -413,15 +399,16 @@ func TestAPanickingHandlerIsLoggedAndTheNextUpdateStillReachesOtherHandlers(t *t
 
 func TestAPanickingWatchHandlerIsLoggedWithItsKeyAndOtherWatchesStillFire(t *testing.T) {
 	t.Parallel()
-	logger, records := newLogger()
-	client, connection := newClientWithTestConnection(t, configdirector.Options{SDKKey: testSDKKey, Logger: logger})
+	server := startSDKServer(t)
+	client, records := newLoggedClient(t, server)
 	client.WatchString("a", "fallback", noUser, func(string) { panic("watch failure") })
-	values := &recorder[string]{}
+	values := newRecorder[string]()
 	client.WatchString("a", "fallback", noUser, values.record)
+	await(t, server.requests)
 
-	recoveringPanics(t, func() { connection.Deliver(configdirector.FullUpdate(configdirector.TextConfig("a", "1"))) })
+	server.send(fullPayload(textConfig("a", "1")).json())
 
-	require.Equal(t, []string{"1"}, values.all())
+	require.Equal(t, "1", values.next(t))
 	require.Len(t, recordsAt(slog.LevelError, records()), 1)
 	require.Equal(t, "watch", attributesOf(recordsAt(slog.LevelError, records())[0])["event"])
 	require.Equal(t, "a", attributesOf(recordsAt(slog.LevelError, records())[0])["key"])
@@ -429,93 +416,101 @@ func TestAPanickingWatchHandlerIsLoggedWithItsKeyAndOtherWatchesStillFire(t *tes
 
 func TestAPanickingReadyHandlerDoesNotStopTheClientBecomingReady(t *testing.T) {
 	t.Parallel()
-	logger, records := newLogger()
-	client, connection := newClientWithTestConnection(t, configdirector.Options{SDKKey: testSDKKey, Logger: logger})
+	server := startSDKServer(t)
+	client, records := newLoggedClient(t, server)
 	client.OnReady(func() { panic("ready failure") })
+	await(t, server.requests)
 
-	recoveringPanics(t, func() { connection.Deliver(configdirector.FullUpdate(configdirector.TextConfig("a", "1"))) })
+	server.send(fullPayload(textConfig("a", "1")).json())
 
-	require.True(t, client.Ready())
+	waitForReady(t, client)
 	require.Len(t, recordsAt(slog.LevelError, records()), 1)
 	require.Equal(t, "ready", attributesOf(recordsAt(slog.LevelError, records())[0])["event"])
 }
 
 func TestUnsubscribingAHandlerStopsDelivery(t *testing.T) {
 	t.Parallel()
-	client, connection := newDefaultClientWithTestConnection(t)
-	updates := &recorder[configdirector.ConfigsUpdated]{}
+	client, server := newReadyClientAgainst(t, fullPayload(textConfig("a", "1")))
+	updates := newRecorder[configdirector.ConfigsUpdated]()
 	unsubscribe := client.OnConfigsUpdated(updates.record)
-	connection.Deliver(configdirector.FullUpdate(configdirector.TextConfig("a", "1")))
+	later := newRecorder[configdirector.ConfigsUpdated]()
+	client.OnConfigsUpdated(later.record)
 
 	unsubscribe()
-	connection.Deliver(configdirector.DeltaUpdate(configdirector.TextConfig("a", "2")))
+	server.send(deltaPayload(textConfig("a", "2")).json())
 
-	require.Len(t, updates.all(), 1)
+	later.next(t)
+	require.Empty(t, updates.received())
 }
 
 func TestUnsubscribingAWatchStopsDelivery(t *testing.T) {
 	t.Parallel()
-	client, connection := newDefaultClientWithTestConnection(t)
-	values := &recorder[string]{}
+	client, server := newReadyClientAgainst(t, fullPayload(textConfig("a", "1")))
+	values := newRecorder[string]()
 	unsubscribe := client.WatchString("a", "fallback", noUser, values.record)
-	connection.Deliver(configdirector.FullUpdate(configdirector.TextConfig("a", "1")))
+	later := newRecorder[string]()
+	client.WatchString("a", "fallback", noUser, later.record)
 
 	unsubscribe()
-	connection.Deliver(configdirector.DeltaUpdate(configdirector.TextConfig("a", "2")))
+	server.send(deltaPayload(textConfig("a", "2")).json())
 
-	require.Equal(t, []string{"1"}, values.all())
+	require.Equal(t, "2", later.next(t))
+	require.Empty(t, values.received())
 }
 
 func TestUnsubscribingOneWatchLeavesTheOthersOnTheSameKey(t *testing.T) {
 	t.Parallel()
-	client, connection := newDefaultClientWithTestConnection(t)
-	first := &recorder[string]{}
-	second := &recorder[string]{}
+	client, server := newReadyClientAgainst(t, fullPayload())
+	first := newRecorder[string]()
+	second := newRecorder[string]()
 	unsubscribeFirst := client.WatchString("a", "fallback", noUser, first.record)
 	client.WatchString("a", "fallback", noUser, second.record)
 
 	unsubscribeFirst()
-	connection.Deliver(configdirector.FullUpdate(configdirector.TextConfig("a", "1")))
+	server.send(fullPayload(textConfig("a", "1")).json())
 
-	require.Empty(t, first.all())
-	require.Equal(t, []string{"1"}, second.all())
+	require.Equal(t, "1", second.next(t))
+	require.Empty(t, first.received())
 }
 
 func TestUnwatchAllStopsEveryWatch(t *testing.T) {
 	t.Parallel()
-	client, connection := newDefaultClientWithTestConnection(t)
-	values := &recorder[string]{}
+	client, server := newReadyClientAgainst(t, fullPayload())
+	values := newRecorder[string]()
 	client.WatchString("a", "fallback", noUser, values.record)
 	client.WatchString("b", "fallback", noUser, values.record)
+	updates := newRecorder[configdirector.ConfigsUpdated]()
+	client.OnConfigsUpdated(updates.record)
 
 	client.UnwatchAll()
-	connection.Deliver(configdirector.FullUpdate(configdirector.TextConfig("a", "1"), configdirector.TextConfig("b", "2")))
+	server.send(fullPayload(textConfig("a", "1"), textConfig("b", "2")).json())
 
-	require.Empty(t, values.all())
+	updates.next(t)
+	require.Empty(t, values.received())
 }
 
 func TestCloseStopsEvaluatedHandlersFromBeingCalled(t *testing.T) {
 	t.Parallel()
 	client := newReadyClient(t)
-	evaluations := &recorder[configdirector.Evaluation]{}
+	evaluations := newRecorder[configdirector.Evaluation]()
 	client.OnConfigEvaluated(evaluations.record)
 	require.NoError(t, client.Close())
 
 	client.BoolValue("new-checkout", false, noUser)
 
-	require.Empty(t, evaluations.all())
+	require.Empty(t, evaluations.received())
 }
 
 func TestRegisteringANilHandlerPanics(t *testing.T) {
 	t.Parallel()
-	client, _ := newDefaultClientWithTestConnection(t)
+	client := newClientAgainst(t, startSDKServer(t))
 
 	require.Panics(t, func() { client.OnConfigsUpdated(nil) })
 }
 
 func TestWatchingWithANilHandlerPanics(t *testing.T) {
 	t.Parallel()
-	client, _ := newDefaultClientWithTestConnection(t)
+	client := newClientAgainst(t, startSDKServer(t))
 
 	require.Panics(t, func() { client.WatchBool("a", false, noUser, nil) })
 }

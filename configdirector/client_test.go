@@ -9,8 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testSDKKey = "test-server-sdk-key"
-
 var noUser = configdirector.UserContext{}
 
 func newClient(t *testing.T, options configdirector.Options) *configdirector.Client {
@@ -21,9 +19,14 @@ func newClient(t *testing.T, options configdirector.Options) *configdirector.Cli
 	return client
 }
 
+func newClientAgainst(t *testing.T, server *sdkServer) *configdirector.Client {
+	t.Helper()
+	return newClient(t, server.options())
+}
+
 func newReadyClient(t *testing.T) *configdirector.Client {
 	t.Helper()
-	client := newClient(t, configdirector.Options{SDKKey: testSDKKey})
+	client := newClientAgainst(t, startSDKServer(t, standardPayload().json()))
 	waitForReady(t, client)
 	return client
 }
@@ -45,7 +48,7 @@ func usedDefault(reason configdirector.EvaluationReason) configdirector.Evaluati
 
 func TestANewClientIsNeitherReadyNorClosed(t *testing.T) {
 	t.Parallel()
-	client := newClient(t, configdirector.Options{SDKKey: testSDKKey})
+	client := newClientAgainst(t, startSDKServer(t))
 
 	require.False(t, client.Ready())
 	require.False(t, client.Closed())
@@ -53,7 +56,7 @@ func TestANewClientIsNeitherReadyNorClosed(t *testing.T) {
 
 func TestWaitForReadyReturnsOnceTheFirstConfigStateArrives(t *testing.T) {
 	t.Parallel()
-	client := newClient(t, configdirector.Options{SDKKey: testSDKKey})
+	client := newClientAgainst(t, startSDKServer(t, standardPayload().json()))
 
 	err := client.WaitForReady(context.Background())
 
@@ -63,7 +66,7 @@ func TestWaitForReadyReturnsOnceTheFirstConfigStateArrives(t *testing.T) {
 
 func TestWaitForReadyReturnsTheContextErrorWhenTheContextEndsFirst(t *testing.T) {
 	t.Parallel()
-	client := newClient(t, configdirector.Options{SDKKey: testSDKKey})
+	client := newClientAgainst(t, startSDKServer(t))
 	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
 	defer cancel()
 
@@ -75,7 +78,7 @@ func TestWaitForReadyReturnsTheContextErrorWhenTheContextEndsFirst(t *testing.T)
 
 func TestWaitForReadyReturnsCanceledWhenTheContextIsCancelled(t *testing.T) {
 	t.Parallel()
-	client := newClient(t, configdirector.Options{SDKKey: testSDKKey})
+	client := newClientAgainst(t, startSDKServer(t))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -86,11 +89,14 @@ func TestWaitForReadyReturnsCanceledWhenTheContextIsCancelled(t *testing.T) {
 
 func TestTheClientKeepsConnectingAfterAWaitEnds(t *testing.T) {
 	t.Parallel()
-	client := newClient(t, configdirector.Options{SDKKey: testSDKKey})
+	server := startSDKServer(t)
+	client := newClientAgainst(t, server)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
 	defer cancel()
 	require.Error(t, client.WaitForReady(ctx))
 
+	await(t, server.requests)
+	server.send(standardPayload().json())
 	err := client.WaitForReady(context.Background())
 
 	require.NoError(t, err)
@@ -99,10 +105,9 @@ func TestTheClientKeepsConnectingAfterAWaitEnds(t *testing.T) {
 
 func TestWaitForReadyIsBoundedByTheConnectionTimeout(t *testing.T) {
 	t.Parallel()
-	client := newClient(t, configdirector.Options{
-		SDKKey:     testSDKKey,
-		Connection: configdirector.ConnectionOptions{Timeout: time.Millisecond},
-	})
+	options := startSDKServer(t).options()
+	options.Connection.Timeout = time.Millisecond
+	client := newClient(t, options)
 
 	err := client.WaitForReady(context.Background())
 
@@ -122,7 +127,7 @@ func TestWaitForReadyReturnsAtOnceWhenTheClientIsReady(t *testing.T) {
 
 func TestWaitForReadyOnAClosedClientReportsTheClientClosed(t *testing.T) {
 	t.Parallel()
-	client := newClient(t, configdirector.Options{SDKKey: testSDKKey})
+	client := newClientAgainst(t, startSDKServer(t))
 	require.NoError(t, client.Close())
 
 	err := client.WaitForReady(context.Background())
@@ -350,7 +355,7 @@ func TestAReadOfAnUnknownKeyFallsBackWithConfigStateMissing(t *testing.T) {
 
 func TestAReadBeforeReadyFallsBackWithClientNotReady(t *testing.T) {
 	t.Parallel()
-	client := newClient(t, configdirector.Options{SDKKey: testSDKKey})
+	client := newClientAgainst(t, startSDKServer(t))
 
 	value, details := client.BoolValueDetails("new-checkout", false, noUser)
 
@@ -394,8 +399,9 @@ func TestReadsEvaluateSegmentsAgainstTheUserTraits(t *testing.T) {
 
 func TestReadsEvaluateTargetingRulesAgainstTheApplicationMetadata(t *testing.T) {
 	t.Parallel()
-	opsConsole := newClient(t, configdirector.Options{SDKKey: testSDKKey, Metadata: configdirector.Metadata{AppName: "ops-console"}})
-	storefront := newClient(t, configdirector.Options{SDKKey: testSDKKey, Metadata: configdirector.Metadata{AppName: "storefront"}})
+	server := startSDKServer(t, standardPayload().json())
+	opsConsole := newClient(t, withAppName(server.options(), "ops-console"))
+	storefront := newClient(t, withAppName(server.options(), "storefront"))
 	waitForReady(t, opsConsole)
 	waitForReady(t, storefront)
 
@@ -444,7 +450,7 @@ func TestAllConfigsEvaluatesAgainstTheUserContext(t *testing.T) {
 
 func TestAllConfigsIsEmptyBeforeReady(t *testing.T) {
 	t.Parallel()
-	client := newClient(t, configdirector.Options{SDKKey: testSDKKey})
+	client := newClientAgainst(t, startSDKServer(t))
 
 	states := client.AllConfigs(noUser)
 
@@ -470,13 +476,7 @@ func TestAClosedClientIsNotReady(t *testing.T) {
 	require.False(t, client.Ready())
 }
 
-func TestNoConfigStateArrivesAfterClose(t *testing.T) {
-	t.Parallel()
-	client := newClient(t, configdirector.Options{SDKKey: testSDKKey})
-	require.NoError(t, client.Close())
-
-	time.Sleep(300 * time.Millisecond)
-
-	require.False(t, client.Ready())
-	require.Empty(t, client.AllConfigs(noUser))
+func withAppName(options configdirector.Options, appName string) configdirector.Options {
+	options.Metadata = configdirector.Metadata{AppName: appName}
+	return options
 }

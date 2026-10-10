@@ -43,6 +43,8 @@ type Client struct {
 	closing   chan struct{}
 	closeOnce sync.Once
 	closeErr  error
+
+	unsupportedPayloadVersionWarning sync.Once
 }
 
 // NewClient validates options, starts connecting to ConfigDirector in the background and
@@ -51,24 +53,19 @@ type Client struct {
 // first config state arrives every read returns its in-code default value; call WaitForReady to
 // wait for it, or attach an OnReady handler through Options.Hooks.
 func NewClient(options Options) (*Client, error) {
-	return newClient(options, newStubConnection())
-}
-
-func newClient(options Options, connection connection) (*Client, error) {
 	settings, err := settingsFrom(options)
 	if err != nil {
 		return nil, err
 	}
 
 	client := &Client{
-		settings:   settings,
-		connection: connection,
-		watches:    newWatchList(),
-		ready:      make(chan struct{}),
-		closing:    make(chan struct{}),
+		settings: settings,
+		watches:  newWatchList(),
+		ready:    make(chan struct{}),
+		closing:  make(chan struct{}),
 	}
 	client.attach(options.Hooks)
-	client.connection.open(client)
+	client.connection = openConnection(settings, client.receiveDocument)
 	return client, nil
 }
 
@@ -144,10 +141,47 @@ func (client *Client) Close() error {
 		client.mutex.Unlock()
 
 		close(client.closing)
-		client.closeErr = client.connection.close()
+		client.closeErr = client.connection.Close()
 		client.settings.logger.Debug("The client is closed")
 	})
 	return client.closeErr
+}
+
+func (client *Client) receiveDocument(document string) {
+	payload, err := parseServerPayload(document)
+	if err != nil {
+		client.settings.logger.Error("A message from the SDK server is not a server SDK payload and was skipped", slog.Any("cause", err))
+		return
+	}
+	client.logUnreadablePartsOf(payload)
+	client.receive(payload)
+}
+
+func (client *Client) logUnreadablePartsOf(payload serverPayload) {
+	logger := client.settings.logger
+	if !payload.declaresASupportedVersion() {
+		client.unsupportedPayloadVersionWarning.Do(func() {
+			logger.Warn(
+				"The SDK server sends a payload version this SDK does not know; the payload is read anyway",
+				slog.String("payloadVersion", string(payload.declaredVersion)),
+				slog.Int("supportedPayloadVersion", supportedPayloadVersion),
+			)
+		})
+	}
+	for _, config := range payload.unreadableConfigs {
+		logger.Warn(
+			"A config in the payload could not be read and was skipped; the definition the client already holds, if any, is kept",
+			slog.String("key", config.key),
+			slog.Any("cause", config.cause),
+		)
+	}
+	for _, segment := range payload.unreadableSegments {
+		logger.Warn(
+			"A segment in the payload could not be read and was skipped; the definition the client already holds, if any, is kept",
+			slog.String("segmentId", segment.id),
+			slog.Any("cause", segment.cause),
+		)
+	}
 }
 
 func (client *Client) receive(payload serverPayload) {

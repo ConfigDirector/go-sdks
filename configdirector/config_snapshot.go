@@ -13,13 +13,30 @@ type configSnapshot struct {
 }
 
 func (snapshot *configSnapshot) withPayload(payload serverPayload) *configSnapshot {
-	if snapshot == nil || payload.kind == payloadKindFull {
-		return &configSnapshot{
-			configs:  maps.Clone(payload.configs),
-			segments: maps.Clone(payload.segments),
+	if snapshot != nil && payload.kind == payloadKindDelta {
+		return snapshot.mergedWith(payload)
+	}
+	return snapshot.replacedBy(payload)
+}
+
+func (snapshot *configSnapshot) replacedBy(payload serverPayload) *configSnapshot {
+	replaced := &configSnapshot{
+		configs:  make(map[string]configDefinition, len(payload.configs)),
+		segments: maps.Clone(payload.segments),
+	}
+	maps.Copy(replaced.configs, payload.configs)
+	if snapshot == nil {
+		return replaced
+	}
+	for _, key := range payload.unreadableConfigKeys() {
+		if held, found := snapshot.configs[key]; found {
+			replaced.configs[key] = held
 		}
 	}
+	return replaced
+}
 
+func (snapshot *configSnapshot) mergedWith(payload serverPayload) *configSnapshot {
 	merged := &configSnapshot{
 		configs:  maps.Clone(snapshot.configs),
 		segments: maps.Clone(snapshot.segments),

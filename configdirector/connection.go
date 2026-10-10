@@ -1,32 +1,35 @@
 package configdirector
 
-import "github.com/ConfigDirector/go-sdks/configdirector/internal/evaluation"
+import (
+	"fmt"
 
-type payloadKind string
-
-const (
-	payloadKindFull  payloadKind = "full"
-	payloadKindDelta payloadKind = "delta"
+	"github.com/ConfigDirector/go-sdks/configdirector/internal/transport"
 )
 
-type configDefinition struct {
-	id             string
-	key            string
-	configType     ConfigType
-	targetingRules evaluation.TargetingRules
-}
-
-type serverPayload struct {
-	kind     payloadKind
-	configs  map[string]configDefinition
-	segments evaluation.Segments
-}
-
-type payloadReceiver interface {
-	receive(payload serverPayload)
-}
+const sdkName = "go-server-sdk"
 
 type connection interface {
-	open(receiver payloadReceiver)
-	close() error
+	Close() error
+}
+
+func openConnection(settings clientSettings, deliver func(document string)) connection {
+	options := transport.Options{
+		SDKKey:  settings.sdkKey,
+		BaseURL: settings.baseURL,
+		MetaContext: transport.MetaContext{
+			SDKName:    sdkName,
+			SDKVersion: Version,
+			AppName:    settings.metadata.AppName,
+			AppVersion: settings.metadata.AppVersion,
+		},
+		HTTPClient: settings.httpClient,
+		Logger:     settings.logger,
+	}
+	switch settings.mode {
+	case ConnectionModeStreaming:
+		return transport.OpenStreaming(options, deliver)
+	case ConnectionModePolling:
+		return transport.OpenPolling(options, settings.pollingInterval, deliver)
+	}
+	panic(fmt.Sprintf("configdirector: the connection mode %q passed validation without a transport", settings.mode))
 }

@@ -8,11 +8,27 @@ import (
 )
 
 func textConfig(key string, value string) configDefinition {
-	return stubConfig(key, ConfigTypeString, value)
+	return configDefinition{
+		id:             "config-" + key,
+		key:            key,
+		configType:     ConfigTypeString,
+		targetingRules: evaluation.TargetingRules{DefaultValue: value, DefaultValueID: "value-" + key + "-default"},
+	}
 }
 
 func payload(kind payloadKind, definitions ...configDefinition) serverPayload {
-	return serverPayload{kind: kind, configs: definitionsByKey(definitions...), segments: evaluation.Segments{}}
+	byKey := make(map[string]configDefinition, len(definitions))
+	for _, definition := range definitions {
+		byKey[definition.key] = definition
+	}
+	return serverPayload{kind: kind, configs: byKey, segments: evaluation.Segments{}}
+}
+
+func withUnreadable(payload serverPayload, keys ...string) serverPayload {
+	for _, key := range keys {
+		payload.unreadableConfigs = append(payload.unreadableConfigs, unreadableConfig{key: key})
+	}
+	return payload
 }
 
 func valuesOf(snapshot *configSnapshot) map[string]string {
@@ -38,6 +54,23 @@ func TestAFullPayloadReplacesThePreviousSnapshot(t *testing.T) {
 	snapshot := previous.withPayload(payload(payloadKindFull, textConfig("b", "3"), textConfig("c", "4")))
 
 	require.Equal(t, map[string]string{"b": "3", "c": "4"}, valuesOf(snapshot))
+}
+
+func TestAFullPayloadKeepsThePreviousDefinitionOfAConfigItCouldNotRead(t *testing.T) {
+	var none *configSnapshot
+	previous := none.withPayload(payload(payloadKindFull, textConfig("a", "1"), textConfig("b", "2")))
+
+	snapshot := previous.withPayload(withUnreadable(payload(payloadKindFull, textConfig("a", "10")), "b"))
+
+	require.Equal(t, map[string]string{"a": "10", "b": "2"}, valuesOf(snapshot))
+}
+
+func TestAFirstPayloadHoldsNothingForAConfigItCouldNotRead(t *testing.T) {
+	var none *configSnapshot
+
+	snapshot := none.withPayload(withUnreadable(payload(payloadKindFull, textConfig("a", "1")), "b"))
+
+	require.Equal(t, map[string]string{"a": "1"}, valuesOf(snapshot))
 }
 
 func TestADeltaPayloadMergesIntoThePreviousSnapshot(t *testing.T) {

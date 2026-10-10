@@ -28,8 +28,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   requested type.
 - `Client.AllConfigs(userContext, keys...)` returning the evaluated `ConfigState` of every config,
   or of the given keys, sorted by key.
-- The connection is a built-in stand-in that serves a fixed set of configs until the transports
-  land.
+- Streaming and polling connection modes. `ConnectionOptions.Mode` picks one; streaming is the
+  default and keeps an event stream open, reconnecting with backoff when it drops; polling asks
+  for config state on `ConnectionOptions.PollingInterval`. Both read full and delta server SDK
+  payloads, segments included, and ignore fields they do not know. A config the client cannot read
+  is skipped with a warning and the definition it already holds, if any, is kept.
+- `ConnectionOptions.URL` routes every request through a proxy, a sub-path included, and
+  `ConnectionOptions.HTTPClient` sends them.
 - Events. `Options.Hooks` takes `OnReady`, `OnConfigsUpdated` and `OnConfigEvaluated` handlers at
   construction, so the ready event cannot be missed; `Client.OnReady`, `Client.OnConfigsUpdated`
   and `Client.OnConfigEvaluated` register the same afterwards and return an unsubscribe func. An

@@ -63,9 +63,18 @@ func attributesOf(record slog.Record) map[string]any {
 	return attributes
 }
 
+func pollingEvery(server *sdkServer, interval time.Duration, logger *slog.Logger) configdirector.Options {
+	options := server.options()
+	options.Connection.Mode = configdirector.ConnectionModePolling
+	options.Connection.PollingInterval = interval
+	options.Logger = logger
+	return options
+}
+
 func TestNewClientAcceptsEveryOption(t *testing.T) {
 	t.Parallel()
 	logger, records := newLogger()
+	server := startSDKServer(t, standardPayload().json())
 
 	client := newClient(t, configdirector.Options{
 		SDKKey:   testSDKKey,
@@ -74,7 +83,7 @@ func TestNewClientAcceptsEveryOption(t *testing.T) {
 			Mode:            configdirector.ConnectionModePolling,
 			PollingInterval: 90 * time.Second,
 			Timeout:         5 * time.Second,
-			URL:             "https://proxy.example.com",
+			URL:             server.URL,
 			HTTPClient:      &http.Client{},
 		},
 		Telemetry: configdirector.TelemetryOptions{EventQueueLimit: 100, FlushInterval: 10 * time.Second},
@@ -192,11 +201,7 @@ func TestNewClientRaisesAPollingIntervalBelowTheMinimumWithOneWarning(t *testing
 	t.Parallel()
 	logger, records := newLogger()
 
-	newClient(t, configdirector.Options{
-		SDKKey:     testSDKKey,
-		Connection: configdirector.ConnectionOptions{Mode: configdirector.ConnectionModePolling, PollingInterval: 30 * time.Second},
-		Logger:     logger,
-	})
+	newClient(t, pollingEvery(startSDKServer(t), 30*time.Second, logger))
 
 	warnings := recordsAt(slog.LevelWarn, records())
 	require.Len(t, warnings, 1)
@@ -208,11 +213,7 @@ func TestNewClientTagsEveryLogRecordWithTheComponent(t *testing.T) {
 	t.Parallel()
 	logger, records := newLogger()
 
-	newClient(t, configdirector.Options{
-		SDKKey:     testSDKKey,
-		Connection: configdirector.ConnectionOptions{Mode: configdirector.ConnectionModePolling, PollingInterval: 30 * time.Second},
-		Logger:     logger,
-	})
+	newClient(t, pollingEvery(startSDKServer(t), 30*time.Second, logger))
 
 	require.Equal(t, "configdirector", attributesOf(recordsAt(slog.LevelWarn, records())[0])["component"])
 }
@@ -221,11 +222,7 @@ func TestNewClientKeepsAPollingIntervalAtTheMinimumWithoutAWarning(t *testing.T)
 	t.Parallel()
 	logger, records := newLogger()
 
-	newClient(t, configdirector.Options{
-		SDKKey:     testSDKKey,
-		Connection: configdirector.ConnectionOptions{Mode: configdirector.ConnectionModePolling, PollingInterval: time.Minute},
-		Logger:     logger,
-	})
+	newClient(t, pollingEvery(startSDKServer(t), time.Minute, logger))
 
 	require.Empty(t, recordsAt(slog.LevelWarn, records()))
 }
@@ -234,11 +231,10 @@ func TestNewClientIgnoresAShortPollingIntervalWhenStreaming(t *testing.T) {
 	t.Parallel()
 	logger, records := newLogger()
 
-	newClient(t, configdirector.Options{
-		SDKKey:     testSDKKey,
-		Connection: configdirector.ConnectionOptions{Mode: configdirector.ConnectionModeStreaming, PollingInterval: 30 * time.Second},
-		Logger:     logger,
-	})
+	options := startSDKServer(t).options()
+	options.Connection.PollingInterval = 30 * time.Second
+	options.Logger = logger
+	newClient(t, options)
 
 	require.Empty(t, recordsAt(slog.LevelWarn, records()))
 }
@@ -246,7 +242,9 @@ func TestNewClientIgnoresAShortPollingIntervalWhenStreaming(t *testing.T) {
 func TestAWaitThatEndsBeforeTheFirstConfigStateIsLoggedAsAWarning(t *testing.T) {
 	t.Parallel()
 	logger, records := newLogger()
-	client := newClient(t, configdirector.Options{SDKKey: testSDKKey, Logger: logger})
+	options := startSDKServer(t).options()
+	options.Logger = logger
+	client := newClient(t, options)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
 	defer cancel()
 

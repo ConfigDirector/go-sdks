@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -127,7 +128,16 @@ func TestALogLevelThatIsNotALevelIsRejected(t *testing.T) {
 
 func readyClient(t *testing.T, hooks configdirector.Hooks) *configdirector.Client {
 	t.Helper()
-	client, err := configdirector.NewClient(configdirector.Options{SDKKey: "test-key", Hooks: hooks})
+	server := startSDKServerWithoutConfigs(t)
+	client, err := configdirector.NewClient(configdirector.Options{
+		SDKKey: "test-key",
+		Connection: configdirector.ConnectionOptions{
+			Mode:       configdirector.ConnectionModePolling,
+			URL:        server.URL,
+			HTTPClient: server.Client(),
+		},
+		Hooks: hooks,
+	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, client.Close()) })
 
@@ -135,6 +145,18 @@ func readyClient(t *testing.T, hooks configdirector.Hooks) *configdirector.Clien
 	defer cancel()
 	require.NoError(t, client.WaitForReady(ctx))
 	return client
+}
+
+func startSDKServerWithoutConfigs(t *testing.T) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /server/polling/v1", func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{"payloadVersion":1,"kind":"full","configs":{},"segments":{}}`)
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	return server
 }
 
 func evaluatedToTheDefaultFor(user configdirector.UserContext, key string, defaultValue any) configdirector.Evaluation {

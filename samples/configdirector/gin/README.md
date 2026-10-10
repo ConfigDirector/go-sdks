@@ -139,6 +139,5 @@ When the client cannot reach ConfigDirector it stays not ready and every config 
 in-code default value this app passes in. That is the path a production app takes with a wrong
 key or no network, so it is worth seeing: the app keeps serving, on the defaults you chose.
 
-Until the SDK's streaming and polling connections land, the client runs against a built-in
-stand-in config state and checks no key. The five configs this app reads are not in that state,
-so today every read returns its in-code default value for that reason instead.
+With `fake-sample-key` the SDK server refuses the connection. The client logs that once at error
+level, stays not ready, and the app answers every request with the in-code default values above.
