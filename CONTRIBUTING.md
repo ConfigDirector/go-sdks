@@ -53,9 +53,12 @@ from what `go mod tidy` would write.
 and reads the standard library's sources with it. It also scans the standard library of the Go
 that runs it, so it fails on a Go that is behind its latest patch release; upgrade Go rather than
 silence it. `make fuzz`
-runs every fuzz target listed in the Makefile for 20 seconds each: the parsers that take input
-from the network, which are the event-stream parser, the server SDK payload decoder, the value
-parser and the JSON pointer lookup into a context's traits. A failing input is written under the
+runs every fuzz target listed in the Makefile for a million executions each: the parsers that
+take input from the network, which are the event-stream parser, the server SDK payload decoder,
+the value parser and the JSON pointer lookup into a context's traits. The budget is a count of
+executions rather than a duration because a duration sets a deadline whose expiry Go 1.25 and
+1.26 sometimes report as a failure (golang/go#75804, fixed in Go 1.27.1), and the checks run on
+the oldest supported Go. A failing input is written under the
 package's `testdata/fuzz/` directory, where it replays as a regular test; fix the cause and keep
 the file. Both run in `make check-all` and in CI.
 

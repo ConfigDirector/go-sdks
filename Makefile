@@ -24,13 +24,16 @@ GOVULNCHECK_VERSION := v1.8.0
 GOVULNCHECK := .tools/govulncheck/$(GOVULNCHECK_VERSION)-$(shell go env GOVERSION)/govulncheck$(if $(filter Windows_NT,$(OS)),.exe)
 
 # The fuzz targets, each as <package directory>:<target>. `go test -fuzz` takes one target in one
-# package per run, and CI gives each one this budget.
+# package per run, and CI gives each one this budget, counted in executions rather than seconds:
+# a duration sets a deadline whose expiry Go 1.25 and 1.26 sometimes report as a failure
+# (golang/go#75804, fixed in 1.27.1), and a count sets none. A million executions take about 10
+# to 20 seconds per target on the CI runners.
 FUZZ_TARGETS := \
 	configdirector:FuzzParseValue \
 	configdirector:FuzzParseServerPayload \
 	configdirector/internal/evaluation:FuzzTraitAtPointer \
 	configdirector/internal/eventsource:FuzzParse
-FUZZ_TIME := 20s
+FUZZ_EXECUTIONS := 1000000
 
 hooks:
 	git config core.hooksPath .githooks
@@ -87,8 +90,8 @@ test-race:
 fuzz:
 	@for target in $(FUZZ_TARGETS); do \
 		package="./$${target%%:*}"; name="$${target##*:}"; \
-		printf '\n\033[1m==> fuzz %s in %s for %s\033[0m\n' "$$name" "$$package" "$(FUZZ_TIME)"; \
-		go test -run='^$$' -fuzz='^'"$$name"'$$' -fuzztime=$(FUZZ_TIME) "$$package" || exit 1; \
+		printf '\n\033[1m==> fuzz %s in %s for %s executions\033[0m\n' "$$name" "$$package" "$(FUZZ_EXECUTIONS)"; \
+		go test -run='^$$' -fuzz='^'"$$name"'$$' -fuzztime=$(FUZZ_EXECUTIONS)x "$$package" || exit 1; \
 	done
 
 # A measurement, not a check: the smoke benchmark of a read.
