@@ -31,4 +31,7 @@
 //	client.OnConfigsUpdated(func(update configdirector.ConfigsUpdated) {
 //		log.Printf("configs updated: %v", update.Keys)
 //	})
+//
+// To test code that takes a *Client without a server, build the client with package
+// configdirectortest, which serves values a test controls.
 package configdirector

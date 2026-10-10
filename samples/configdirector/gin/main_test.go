@@ -1,9 +1,7 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -11,13 +9,38 @@ import (
 	"time"
 
 	"github.com/ConfigDirector/go-sdks/configdirector"
+	"github.com/ConfigDirector/go-sdks/configdirector/configdirectortest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestConfigsReturnsTheFiveConfigs(t *testing.T) {
+var servedValues = map[string]any{
+	"temporary-feature-flag": false,
+	"permanent-kill-switch":  true,
+	"integer-config":         20,
+	"day-of-the-week-config": "Monday",
+	"json-value-config":      map[string]any{"color": "blue"},
+}
+
+func TestConfigsReturnsTheFiveConfigsAsServed(t *testing.T) {
 	t.Parallel()
-	router := newRouter(readyClient(t, configdirector.Hooks{}))
+	router := newRouter(newTestClient(t, servedValues).Client())
+
+	response := get(router, "/configs?id=user-123&plan=pro")
+
+	require.Equal(t, http.StatusOK, response.Code)
+	assert.JSONEq(t, `{
+		"temporary-feature-flag": false,
+		"permanent-kill-switch": true,
+		"integer-config": 20,
+		"day-of-the-week-config": "Monday",
+		"json-value-config": {"color": "blue"}
+	}`, response.Body.String())
+}
+
+func TestConfigsReturnsTheInCodeDefaultValuesWhenNoneAreServed(t *testing.T) {
+	t.Parallel()
+	router := newRouter(newTestClient(t, nil).Client())
 
 	response := get(router, "/configs?id=user-123&plan=pro")
 
@@ -31,13 +54,28 @@ func TestConfigsReturnsTheFiveConfigs(t *testing.T) {
 	}`, response.Body.String())
 }
 
+func TestConfigsFollowAValueChangedAfterTheFirstRequest(t *testing.T) {
+	t.Parallel()
+	testClient := newTestClient(t, servedValues)
+	router := newRouter(testClient.Client())
+	get(router, "/configs?id=user-123")
+
+	require.NoError(t, testClient.SetValue("integer-config", 30))
+	response := get(router, "/configs?id=user-123")
+
+	require.Equal(t, http.StatusOK, response.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	assert.Equal(t, float64(30), body["integer-config"])
+}
+
 func TestTheQueryStringBecomesTheUserContextOfEveryEvaluation(t *testing.T) {
 	t.Parallel()
 	evaluationsByKey := map[string]configdirector.Evaluation{}
 	recordEvaluation := func(evaluation configdirector.Evaluation) {
 		evaluationsByKey[evaluation.Key] = evaluation
 	}
-	router := newRouter(readyClient(t, configdirector.Hooks{OnConfigEvaluated: recordEvaluation}))
+	router := newRouter(newTestClient(t, nil, configdirectortest.WithHooks(configdirector.Hooks{OnConfigEvaluated: recordEvaluation})).Client())
 
 	get(router, "/configs?id=user-123&name=Ada&anonymous=true&plan=pro&region=eu")
 
@@ -58,7 +96,7 @@ func TestTheQueryStringBecomesTheUserContextOfEveryEvaluation(t *testing.T) {
 
 func TestAnUnknownRouteReturnsAHintToTheConfigsRoute(t *testing.T) {
 	t.Parallel()
-	router := newRouter(readyClient(t, configdirector.Hooks{}))
+	router := newRouter(newTestClient(t, nil).Client())
 
 	response := get(router, "/other")
 
@@ -126,37 +164,11 @@ func TestALogLevelThatIsNotALevelIsRejected(t *testing.T) {
 	assert.ErrorContains(t, err, "CONFIGDIRECTOR_LOG_LEVEL")
 }
 
-func readyClient(t *testing.T, hooks configdirector.Hooks) *configdirector.Client {
+func newTestClient(t *testing.T, values map[string]any, options ...configdirectortest.Option) *configdirectortest.TestClient {
 	t.Helper()
-	server := startSDKServerWithoutConfigs(t)
-	client, err := configdirector.NewClient(configdirector.Options{
-		SDKKey: "test-key",
-		Connection: configdirector.ConnectionOptions{
-			Mode:       configdirector.ConnectionModePolling,
-			URL:        server.URL,
-			HTTPClient: server.Client(),
-		},
-		Hooks: hooks,
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, client.Close()) })
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	require.NoError(t, client.WaitForReady(ctx))
-	return client
-}
-
-func startSDKServerWithoutConfigs(t *testing.T) *httptest.Server {
-	t.Helper()
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /server/polling/v1", func(writer http.ResponseWriter, _ *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(writer, `{"payloadVersion":1,"kind":"full","configs":{},"segments":{}}`)
-	})
-	server := httptest.NewServer(mux)
-	t.Cleanup(server.Close)
-	return server
+	testClient := configdirectortest.NewTestClient(values, options...)
+	t.Cleanup(func() { require.NoError(t, testClient.Close()) })
+	return testClient
 }
 
 func evaluatedToTheDefaultFor(user configdirector.UserContext, key string, defaultValue any) configdirector.Evaluation {

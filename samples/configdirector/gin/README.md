@@ -116,19 +116,24 @@ the [package documentation](../../../configdirector/doc.go) for `WatchBool` and 
 ## Testing
 
 [`main_test.go`](main_test.go) tests the app the way an application using the SDK tests itself:
-it builds the router around a client of its own and drives it with `httptest`, so no port is
-opened. The test attaches an `OnConfigEvaluated` hook to see the user each config was evaluated
-for and why it got the value it did:
+it builds the router around a test client from
+[`configdirectortest`](../../../configdirector/configdirectortest/), the SDK's real client wired
+to an in-memory connection the test controls, and drives the router with `httptest`, so nothing
+reaches the network. The test seeds the five configs with values other than the in-code defaults,
+asserts the response, and changes one with `SetValue` to see the next response follow:
 
 ```go
-evaluationsByKey := map[string]configdirector.Evaluation{}
-recordEvaluation := func(evaluation configdirector.Evaluation) {
-	evaluationsByKey[evaluation.Key] = evaluation
-}
-router := newRouter(readyClient(t, configdirector.Hooks{OnConfigEvaluated: recordEvaluation}))
+testClient := newTestClient(t, servedValues)
+router := newRouter(testClient.Client())
+get(router, "/configs?id=user-123")
 
-get(router, "/configs?id=user-123&name=Ada&anonymous=true&plan=pro&region=eu")
+require.NoError(t, testClient.SetValue("integer-config", 30))
+response := get(router, "/configs?id=user-123")
 ```
+
+`newTestClient` wraps `configdirectortest.NewTestClient` so that `t.Cleanup` closes the client. An
+`OnConfigEvaluated` hook, attached through `configdirectortest.WithHooks`, shows the user each
+config was evaluated for and why it got the value it did.
 
 `newRouter` takes the client as a parameter rather than reaching for a package-level one, which
 is what lets the test hand it a client it controls.

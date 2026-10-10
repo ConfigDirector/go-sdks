@@ -57,16 +57,21 @@ func NewClient(options Options) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	return newClient(settings, options.Hooks, func(deliver func(document string)) connection {
+		return openTransport(settings, deliver)
+	}), nil
+}
 
+func newClient(settings clientSettings, hooks Hooks, open func(deliver func(document string)) connection) *Client {
 	client := &Client{
 		settings: settings,
 		watches:  newWatchList(),
 		ready:    make(chan struct{}),
 		closing:  make(chan struct{}),
 	}
-	client.attach(options.Hooks)
-	client.connection = openConnection(settings, client.receiveDocument)
-	return client, nil
+	client.attach(hooks)
+	client.connection = open(client.receiveDocument)
+	return client
 }
 
 func (client *Client) attach(hooks Hooks) {

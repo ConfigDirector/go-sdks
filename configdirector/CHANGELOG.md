@@ -50,3 +50,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Handlers run on the connection's goroutine. A panic in a handler is recovered and logged at
   error level, and the other handlers and the connection continue. `Close` cancels every handler
   and watch.
+- `configdirectortest`, a package for testing code that takes a `*Client` without a server.
+  `NewTestClient(values, options...)` wires the real client to an in-memory connection the test
+  controls, with no network, no telemetry and no goroutine; the config type follows from each Go
+  value. `SetValue`, `RemoveValue` and `ReplaceValues` deliver their update on the calling
+  goroutine before they return, so watches and `OnConfigsUpdated` handlers have run; a change made
+  from inside a handler is delivered after the update being handled.
+  `HoldInitialization()` keeps the client not ready until `CompleteInitialization()`, or
+  `FailInitialization()` fails it as a refused SDK key would; `WithTimeout`, `WithLogger` and
+  `WithHooks` adjust the client.
