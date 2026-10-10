@@ -113,8 +113,8 @@ define check-sample
 	&& GOWORK=$(2) go test -race ./...)
 endef
 
-# Lints and tests every sample against the modules its go.mod names, the way an application builds
-# it: the released modules, once the first release has replaced the `replace` directive.
+# Lints and tests every sample against the released modules its go.mod names, the way an
+# application builds it.
 samples: $(GOLANGCI_LINT)
 	@for sample in $(SAMPLES); do \
 		printf '\n\033[1m==> sample %s (released modules)\033[0m\n' "$$sample"; \

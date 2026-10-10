@@ -9,11 +9,9 @@ different web frameworks, grouped by the module they demonstrate.
 |---|---|---|
 | [gin/](configdirector/gin/) | [Gin](https://gin-gonic.com) | Minimal HTTP app: one client per process, per-request evaluation, clean shutdown |
 
-Each sample is an independent module outside the root `go.work`, depending on the SDK exactly as
-a real app would. Until the first release of the SDK is tagged, each sample's `go.mod` points at
-the SDK in this repository through a `replace` directive; the release replaces that with the
-released version. `make samples-local` checks every sample against the modules in this working
-tree either way.
+Each sample is an independent module outside the root `go.work`, depending on a released SDK
+exactly as a real app would. `make samples-local` also checks every sample against the modules in
+this working tree.
 
 To run one from this repository, keep the root workspace out of the way with `GOWORK=off`; a copy
 of the sample outside the repository runs with a plain `go run .`:
@@ -25,6 +23,4 @@ GOWORK=off go run .
 
 > The samples need a real server SDK key to resolve configs. Without one the client stays not
 > ready and every config falls back to the in-code default value the sample passes in, which is
-> also what a production app sees when it cannot reach ConfigDirector. Until the SDK's streaming
-> and polling connections land, the client runs against a built-in stand-in config state instead,
-> which checks no key and holds none of the configs the samples read.
+> also what a production app sees when it cannot reach ConfigDirector.

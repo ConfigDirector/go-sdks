@@ -22,13 +22,11 @@ version of the SDK from the module proxy, never this working tree, because `go m
 
 [samples/](samples/) holds sample applications, one module per framework under
 `samples/<module>/<framework>`. They are modules outside the workspace and depend on the SDK the
-way an application does. Until the first SDK release is tagged, each sample's `go.mod` reaches the
-SDK in this working tree through a `replace` directive, which the first release swaps for the
-released version (see [The first release](#the-first-release)). `make samples` lints and tests
-every sample the way an application builds it, against the modules its `go.mod` names, and
-`make samples-local` against the modules in this working tree, through a throwaway workspace it
-writes under `.tools/`, so a breaking API change fails before it ships. Add a new sample to
-`SAMPLES` in the Makefile.
+way an application does, each requiring a released version of the module it shows. `make samples`
+lints and tests every sample the way an application builds it, against the modules its `go.mod`
+names, and `make samples-local` against the modules in this working tree, through a throwaway
+workspace it writes under `.tools/`, so a breaking API change fails before it ships. Add a new
+sample to `SAMPLES` in the Makefile.
 
 ## Working on the modules
 
@@ -116,15 +114,6 @@ publishes as a new module path ending in `/v2` (`github.com/ConfigDirector/go-sd
 tagged `configdirector/v2.0.0`), and every consumer changes its import path to move. Breaking
 changes are therefore batched into a major release rather than shipped one at a time, and
 anything that can be added instead of changed is.
-
-### The first release
-
-Until `configdirector/v0.1.0` exists, each sample's `go.mod` requires the SDK at `v0.0.0` and
-reaches this working tree through a `replace` directive, because the module proxy has nothing to
-serve. Once the workflow has tagged it, remove the `replace` directive from every sample under
-`samples/configdirector/`, set the requirement to the released version, run `go mod tidy` in the
-sample, and run `make samples`, which from then on checks the samples against the module an
-application installs. A copy of a sample outside this repository builds unchanged after that.
 
 ### Releasing the provider after an SDK change
 
