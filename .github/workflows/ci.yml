@@ -34,6 +34,7 @@ jobs:
 
       - run: make verify-tidy
       - run: make lint
+      - run: make test-release-preflight
 
   test:
     name: Test (Go ${{ matrix.go }} on ${{ matrix.os }})
@@ -85,6 +86,8 @@ jobs:
           go-version-file: go.work
           cache-dependency-path: "**/go.sum"
 
-      # Each sample is a module outside go.work. This checks them against the modules in this
-      # working tree, which is what catches a breaking API change before it ships.
+      # Each sample is a module outside go.work. The first run checks them against the released
+      # modules their go.mod names, as an application builds them; the second against the modules
+      # in this working tree, which is what catches a breaking API change before it ships.
+      - run: make samples
       - run: make samples-local

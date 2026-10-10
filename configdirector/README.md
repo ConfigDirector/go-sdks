@@ -7,7 +7,7 @@ Go server SDK for [ConfigDirector](https://www.configdirector.com), remote confi
 ## Install
 
 ```bash
-go get github.com/ConfigDirector/go-sdks/configdirector
+go get github.com/ConfigDirector/go-sdks/configdirector@latest
 ```
 
 ## Retrieve a value

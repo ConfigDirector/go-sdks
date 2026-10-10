@@ -1,0 +1,21 @@
+name: Release configdirector
+
+# Manual by design: releases whatever Version configdirector/version.go declares on the chosen
+# branch, through the steps in release-module.yml.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    uses: ./.github/workflows/release-module.yml
+    permissions:
+      contents: write
+    with:
+      module: configdirector

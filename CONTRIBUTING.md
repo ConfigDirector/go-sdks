@@ -23,10 +23,12 @@ version of the SDK from the module proxy, never this working tree, because `go m
 [samples/](samples/) holds sample applications, one module per framework under
 `samples/<module>/<framework>`. They are modules outside the workspace and depend on the SDK the
 way an application does. Until the first SDK release is tagged, each sample's `go.mod` reaches the
-SDK in this working tree through a `replace` directive, which the release swaps for the released
-version. Either way, `make samples-local` lints and tests every sample against the modules in this
-working tree, through a throwaway workspace it writes under `.tools/`, so a breaking API change
-fails before it ships. Add a new sample to `SAMPLES` in the Makefile.
+SDK in this working tree through a `replace` directive, which the first release swaps for the
+released version (see [The first release](#the-first-release)). `make samples` lints and tests
+every sample the way an application builds it, against the modules its `go.mod` names, and
+`make samples-local` against the modules in this working tree, through a throwaway workspace it
+writes under `.tools/`, so a breaking API change fails before it ships. Add a new sample to
+`SAMPLES` in the Makefile.
 
 ## Working on the modules
 
@@ -34,6 +36,7 @@ fails before it ships. Add a new sample to `SAMPLES` in the Makefile.
 make hooks         # pre-push hook that runs make check-all
 make check         # lint and test: the fast loop
 make samples-local # the sample apps against this working tree
+make samples       # the sample apps against the released modules their go.mod names
 make check-all     # everything CI runs
 make benchmark     # the smoke benchmark of a read; a measurement, not a check
 ```
@@ -54,6 +57,10 @@ parser and the JSON pointer lookup into a context's traits. A failing input is w
 package's `testdata/fuzz/` directory, where it replays as a regular test; fix the cause and keep
 the file. Both run in `make check-all` and in CI.
 
+`make test-release-preflight` runs the release workflow's preflight script (see
+[Releasing](#releasing)) against throwaway repositories, one scenario per release it must allow
+and per refusal it must make. It runs in `make check-all` and in CI too.
+
 The checks live in the [Makefile](Makefile). CI and the pre-push hook only call `make` targets,
 so add new checks there rather than in either of them.
 
@@ -71,10 +78,10 @@ the SDK, and registering the new name in the ConfigDirector capability tables.
 Each module is released on its own, and the steps are the same for both. The version lives in
 exactly one place per module, the exported `Version` constant:
 
-| Module | Version | Changelog |
-|---|---|---|
-| configdirector | [`version.go`](configdirector/version.go) | [CHANGELOG.md](configdirector/CHANGELOG.md) |
-| configdirector-openfeature | [`version.go`](configdirector-openfeature/version.go) | [CHANGELOG.md](configdirector-openfeature/CHANGELOG.md) |
+| Module | Version | Changelog | Workflow |
+|---|---|---|---|
+| configdirector | [`version.go`](configdirector/version.go) | [CHANGELOG.md](configdirector/CHANGELOG.md) | [Release configdirector](.github/workflows/release-configdirector.yml) |
+| configdirector-openfeature | [`version.go`](configdirector-openfeature/version.go) | [CHANGELOG.md](configdirector-openfeature/CHANGELOG.md) | [Release configdirector-openfeature](.github/workflows/release-configdirector-openfeature.yml) |
 
 A Go module is released by a tag alone; there is nothing to upload. The tag is the module's
 directory followed by its version, `configdirector/vX.Y.Z` or `configdirector-openfeature/vX.Y.Z`,
@@ -83,10 +90,39 @@ and the module proxy serves it from there.
 1. In the module's changelog, rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` and open a
    fresh, empty `## [Unreleased]` above it.
 2. Set `Version` to match and merge both to `main`.
-3. Run the module's release workflow against `main`. The workflows are not written yet; they will
-   be manual (`workflow_dispatch`) by design, release whatever version `main` currently declares,
-   refuse a tag that already exists, require the changelog section, run the suite, push the tag,
-   create a GitHub Release and request the module from proxy.golang.org.
+3. Run the module's release workflow against `main`. It is manual (`workflow_dispatch`) by
+   design and releases whatever version `main` currently declares. It reads `Version`, refuses to
+   go on when the tag already exists or when the changelog has no section for that version (an
+   empty section counts as none), runs `make check-all`, pushes the tag, creates a GitHub Release
+   with the changelog section as its notes, and requests the module from proxy.golang.org, so
+   that the version is installable and indexed on pkg.go.dev at once rather than when the first
+   consumer asks. A version with a prerelease suffix, such as `0.2.0-rc.1`, is marked as a
+   prerelease.
+
+The module proxy serves a released version forever, so a tag is never moved or deleted: to ship a
+fix, bump `Version`, add a changelog section and release again. Both workflows call
+[release-module.yml](.github/workflows/release-module.yml) with their module's name, so a change
+to the release steps is made there once. The checks that run before anything is pushed live in
+[release-preflight.sh](.github/scripts/release-preflight.sh), which
+`make test-release-preflight` covers.
+
+### Version line
+
+The modules stay at `v0.x` until the SDK functional tests pass against them in dev, which is
+when `v1.0.0` is tagged. From then on a breaking change needs a new major version, which Go
+publishes as a new module path ending in `/v2` (`github.com/ConfigDirector/go-sdks/configdirector/v2`,
+tagged `configdirector/v2.0.0`), and every consumer changes its import path to move. Breaking
+changes are therefore batched into a major release rather than shipped one at a time, and
+anything that can be added instead of changed is.
+
+### The first release
+
+Until `configdirector/v0.1.0` exists, each sample's `go.mod` requires the SDK at `v0.0.0` and
+reaches this working tree through a `replace` directive, because the module proxy has nothing to
+serve. Once the workflow has tagged it, remove the `replace` directive from every sample under
+`samples/configdirector/`, set the requirement to the released version, run `go mod tidy` in the
+sample, and run `make samples`, which from then on checks the samples against the module an
+application installs. A copy of a sample outside this repository builds unchanged after that.
 
 ### Releasing the provider after an SDK change
 

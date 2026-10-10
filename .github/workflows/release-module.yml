@@ -1,0 +1,94 @@
+name: Release a module
+
+# The release steps for every module, called by each module's release workflow with its name, so
+# the two cannot drift apart. A Go module is released by a tag alone, which the module proxy then
+# serves forever; everything before the tag is what stops a version from shipping unchecked.
+on:
+  workflow_call:
+    inputs:
+      module:
+        description: The module's directory, which is also the prefix of its tags
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  GOTOOLCHAIN: local
+  MODULE: ${{ inputs.module }}
+
+jobs:
+  release:
+    name: Release ${{ inputs.module }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+          cache-dependency-path: "**/go.sum"
+
+      # Reads Version, refuses a version whose tag already exists or that has no changelog
+      # section, and writes that section to the release notes file.
+      - name: Resolve the version and the release notes
+        id: preflight
+        run: .github/scripts/release-preflight.sh "$MODULE" "$RUNNER_TEMP/release-notes.md"
+
+      - run: make check-all
+
+      - name: Tag the released commit
+        env:
+          TAG: ${{ steps.preflight.outputs.tag }}
+          VERSION: ${{ steps.preflight.outputs.version }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "$TAG" -m "$MODULE $VERSION"
+          git push origin "$TAG"
+
+      # --verify-tag refuses to invent a tag should the push above not have landed.
+      - name: Create the GitHub Release from the changelog section
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.preflight.outputs.tag }}
+          PRERELEASE: ${{ steps.preflight.outputs.prerelease }}
+        run: |
+          prerelease=
+          if [[ $PRERELEASE == true ]]; then
+            prerelease=--prerelease
+          fi
+          gh release create "$TAG" \
+            --verify-tag \
+            --title "$TAG" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
+            $prerelease
+
+      # proxy.golang.org fetches a version the first time it is asked for, and pkg.go.dev indexes
+      # what the proxy serves, so this request is what makes the release installable and
+      # documented at once instead of when the first consumer asks. Run outside the repository so
+      # the root go.work does not turn this into a workspace query.
+      - name: Request the module from proxy.golang.org
+        env:
+          TAG: ${{ steps.preflight.outputs.tag }}
+        working-directory: ${{ runner.temp }}
+        run: |
+          module_version="github.com/ConfigDirector/go-sdks/$MODULE@${TAG#"$MODULE/"}"
+          for attempt in 1 2 3 4 5; do
+            if GOWORK=off GOPROXY=https://proxy.golang.org go list -m "$module_version"; then
+              exit 0
+            fi
+            echo "proxy.golang.org does not serve $module_version yet (attempt $attempt of 5)"
+            sleep 30
+          done
+          echo "::error::proxy.golang.org did not serve $module_version; the tag and the GitHub" \
+               "Release exist, so request it again by hand with the command above."
+          exit 1
