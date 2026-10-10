@@ -14,13 +14,15 @@ func textOf(value any) (text string, hasText bool) {
 	case bool:
 		return strconv.FormatBool(scalar), true
 	case float64:
-		return numberText(scalar), true
+		return NumberText(scalar), true
 	default:
 		return "", false
 	}
 }
 
-func numberText(number float64) string {
+// NumberText renders a number the way the ConfigDirector SDKs read and report it: without an
+// exponent below 1e21, and without a fraction for a whole number.
+func NumberText(number float64) string {
 	if math.Abs(number) < largestNumberSpelledOut {
 		return strconv.FormatFloat(number, 'f', -1, 64)
 	}

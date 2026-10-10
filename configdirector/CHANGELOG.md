@@ -59,3 +59,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   `HoldInitialization()` keeps the client not ready until `CompleteInitialization()`, or
   `FailInitialization()` fails it as a refused SDK key would; `WithTimeout`, `WithLogger` and
   `WithHooks` adjust the client.
+- Telemetry. Every read, and every watch that fires, is reported to ConfigDirector as an
+  evaluated-config event, and every `UserContext` with an `ID` that is not `Anonymous` as a
+  captured context; `AllConfigs` reports nothing. Identical events in a batch are aggregated with
+  a count. A report is sent 5 seconds after the client is created, then every
+  `TelemetryOptions.FlushInterval`, and once more on `Close`; nothing is sent when nothing was
+  evaluated. `TelemetryOptions.EventQueueLimit` bounds what is held between reports, 70% for
+  evaluations and 30% for distinct contexts; when a share is full the oldest entry is dropped and
+  the drops are counted in the next report. A refusal the SDK server would repeat, a 4xx status
+  other than 429, stops telemetry for good with one error log. The requested type is the Go type
+  the read asked for (`bool`, `string`, `int64`, `float64`, or the target's type for `JSONValue`);
+  JSON documents and values longer than 500 characters travel as a value id. A
+  `configdirectortest` client sends no telemetry.

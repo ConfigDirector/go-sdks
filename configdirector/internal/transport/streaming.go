@@ -73,11 +73,11 @@ func openStreaming(options Options, deliver func(data string), timing timing) *S
 }
 
 func streamEndpointsOf(baseURL string) (streamEndpoints, error) {
-	stream, err := endpointURL(baseURL, streamPath)
+	stream, err := EndpointURL(baseURL, streamPath)
 	if err != nil {
 		return streamEndpoints{}, err
 	}
-	heartbeat, err := endpointURL(baseURL, heartbeatPath)
+	heartbeat, err := EndpointURL(baseURL, heartbeatPath)
 	if err != nil {
 		return streamEndpoints{}, err
 	}
@@ -152,7 +152,7 @@ func nextStepAfter(end streamEnd, previousAttempt int, random float64) nextStep 
 	switch {
 	case end.kind == streamEndClosed:
 		return nextStep{kind: nextStepStopClosed}
-	case end.kind == streamEndURLUnusable, end.kind == streamEndRefused && isFatalStatus(end.status):
+	case end.kind == streamEndURLUnusable, end.kind == streamEndRefused && IsFatalStatus(end.status):
 		return nextStep{kind: nextStepStopFatal}
 	case end.kind == streamEndDropped:
 		return reconnectStep(1, end, random)
@@ -231,7 +231,7 @@ func (streaming *Streaming) streamOnceUnlessClosed(ctx context.Context, lastEven
 
 func (streaming *Streaming) openStream(ctx context.Context, sessionID string, lastEventID string) (*http.Response, error) {
 	body := streamRequestBody{ServerSDKKey: streaming.options.SDKKey, SessionID: sessionID, MetaContext: streaming.options.MetaContext}
-	request, err := streaming.options.jsonRequest(ctx, streaming.endpoints.stream, body)
+	request, err := streaming.options.JSONRequest(ctx, streaming.endpoints.stream, body)
 	if err != nil {
 		return nil, err
 	}
@@ -318,7 +318,7 @@ func (streaming *Streaming) sendHeartbeat(ctx context.Context, sessionID string)
 
 func (streaming *Streaming) postHeartbeat(ctx context.Context, sessionID string) error {
 	body := heartbeatRequestBody{ServerSDKKey: streaming.options.SDKKey, SessionID: sessionID}
-	request, err := streaming.options.jsonRequest(ctx, streaming.endpoints.heartbeat, body)
+	request, err := streaming.options.JSONRequest(ctx, streaming.endpoints.heartbeat, body)
 	if err != nil {
 		return err
 	}
@@ -326,7 +326,7 @@ func (streaming *Streaming) postHeartbeat(ctx context.Context, sessionID string)
 	if err != nil {
 		return err
 	}
-	discardResponseBody(response.Body)
+	DiscardResponseBody(response.Body)
 	if response.StatusCode != http.StatusNoContent {
 		return refusalError(response.StatusCode, "")
 	}

@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/ConfigDirector/go-sdks/configdirector/internal/evaluation"
+	"github.com/ConfigDirector/go-sdks/configdirector/internal/telemetry"
 )
 
 // ErrClientClosed is returned by WaitForReady once Close has been called.
@@ -30,6 +31,7 @@ var ErrClientClosed = errors.New("configdirector: the client is closed")
 type Client struct {
 	settings   clientSettings
 	connection connection
+	telemetry  telemetryCollector
 
 	mutex             sync.RWMutex
 	snapshot          *configSnapshot
@@ -59,15 +61,16 @@ func NewClient(options Options) (*Client, error) {
 	}
 	return newClient(settings, options.Hooks, func(deliver func(document string)) connection {
 		return openTransport(settings, deliver)
-	}), nil
+	}, startTelemetry(settings)), nil
 }
 
-func newClient(settings clientSettings, hooks Hooks, open func(deliver func(document string)) connection) *Client {
+func newClient(settings clientSettings, hooks Hooks, open func(deliver func(document string)) connection, collector telemetryCollector) *Client {
 	client := &Client{
-		settings: settings,
-		watches:  newWatchList(),
-		ready:    make(chan struct{}),
-		closing:  make(chan struct{}),
+		settings:  settings,
+		telemetry: collector,
+		watches:   newWatchList(),
+		ready:     make(chan struct{}),
+		closing:   make(chan struct{}),
 	}
 	client.attach(hooks)
 	client.connection = open(client.receiveDocument)
@@ -131,9 +134,10 @@ func (client *Client) Closed() bool {
 	return client.closed
 }
 
-// Close stops the connection, cancels every handler and watch, and releases the client's
-// goroutines. After Close the client is not ready and every read returns its in-code default
-// value. Calling Close more than once is harmless and returns the first call's result.
+// Close stops the connection, cancels every handler and watch, sends the telemetry collected
+// since the last report, and releases the client's goroutines. After Close the client is not
+// ready and every read returns its in-code default value. Calling Close more than once is
+// harmless and returns the first call's result.
 func (client *Client) Close() error {
 	client.closeOnce.Do(func() {
 		client.mutex.Lock()
@@ -147,6 +151,7 @@ func (client *Client) Close() error {
 
 		close(client.closing)
 		client.closeErr = client.connection.Close()
+		client.telemetry.Close()
 		client.settings.logger.Debug("The client is closed")
 	})
 	return client.closeErr
@@ -317,39 +322,40 @@ func readValue[T any](client *Client, key string, defaultValue T, userContext Us
 }
 
 func evaluateValueAndReport[T any](client *Client, snapshot *configSnapshot, key string, defaultValue T, userContext UserContext, valueFrom func(ConfigState) (T, EvaluationReason)) (T, Evaluation) {
-	value, evaluated := evaluateValue(client, snapshot, key, defaultValue, userContext, valueFrom)
-	client.reportEvaluation(evaluated)
-	return value, evaluated
+	value, read := evaluateValue(client, snapshot, key, defaultValue, userContext, valueFrom)
+	client.reportRead(read, telemetry.ValueOf(defaultValue, read.reportsAsDocument(), ""), reflect.TypeFor[T]())
+	return value, read.evaluation
 }
 
-func evaluateValue[T any](client *Client, snapshot *configSnapshot, key string, defaultValue T, userContext UserContext, valueFrom func(ConfigState) (T, EvaluationReason)) (T, Evaluation) {
+func evaluateValue[T any](client *Client, snapshot *configSnapshot, key string, defaultValue T, userContext UserContext, valueFrom func(ConfigState) (T, EvaluationReason)) (T, configRead) {
 	state, reason := client.readableState(snapshot, key, userContext)
 	if reason != EvaluationReasonFoundMatch {
-		return defaultValue, defaultEvaluation(key, defaultValue, reason, userContext)
+		return defaultValue, configRead{kind: typedRead, evaluation: defaultEvaluation(key, defaultValue, reason, userContext), configType: state.Type}
 	}
 
 	value, reason := valueFrom(state)
 	if reason != EvaluationReasonFoundMatch {
-		return defaultValue, defaultEvaluation(key, defaultValue, reason, userContext)
+		return defaultValue, configRead{kind: typedRead, evaluation: defaultEvaluation(key, defaultValue, reason, userContext), configType: state.Type}
 	}
-	return value, servedEvaluation(key, value, state.ValueID, userContext)
+	return value, configRead{kind: typedRead, evaluation: servedEvaluation(key, value, state.ValueID, userContext), configType: state.Type}
 }
 
 func (client *Client) evaluateJSONAndReport(snapshot *configSnapshot, key string, targetValue reflect.Value, userContext UserContext) Evaluation {
-	evaluated := client.evaluateJSON(snapshot, key, targetValue, userContext)
-	client.reportEvaluation(evaluated)
-	return evaluated
+	defaultValue := telemetry.ValueOf(targetValue.Elem().Interface(), documentRead.reportsAsDocument(""), "")
+	read := client.evaluateJSON(snapshot, key, targetValue, userContext)
+	client.reportRead(read, defaultValue, targetValue.Elem().Type())
+	return read.evaluation
 }
 
-func (client *Client) evaluateJSON(snapshot *configSnapshot, key string, targetValue reflect.Value, userContext UserContext) Evaluation {
+func (client *Client) evaluateJSON(snapshot *configSnapshot, key string, targetValue reflect.Value, userContext UserContext) configRead {
 	state, reason := client.readableState(snapshot, key, userContext)
 	if reason == EvaluationReasonFoundMatch {
 		reason = decodeJSONInto(state, targetValue)
 	}
 	if reason != EvaluationReasonFoundMatch {
-		return defaultEvaluation(key, targetValue.Elem().Interface(), reason, userContext)
+		return configRead{kind: documentRead, evaluation: defaultEvaluation(key, targetValue.Elem().Interface(), reason, userContext), configType: state.Type}
 	}
-	return servedEvaluation(key, targetValue.Elem().Interface(), state.ValueID, userContext)
+	return configRead{kind: documentRead, evaluation: servedEvaluation(key, targetValue.Elem().Interface(), state.ValueID, userContext), configType: state.Type}
 }
 
 func (client *Client) readableState(snapshot *configSnapshot, key string, userContext UserContext) (ConfigState, EvaluationReason) {

@@ -48,7 +48,9 @@ func (metaContext MetaContext) userAgent() string {
 	return metaContext.SDKName + "/" + metaContext.SDKVersion
 }
 
-func (options Options) jsonRequest(ctx context.Context, endpoint string, body any) (*http.Request, error) {
+// JSONRequest builds a POST of body as JSON to endpoint, identifying the SDK in the User-Agent
+// header.
+func (options Options) JSONRequest(ctx context.Context, endpoint string, body any) (*http.Request, error) {
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -62,7 +64,9 @@ func (options Options) jsonRequest(ctx context.Context, endpoint string, body an
 	return request, nil
 }
 
-func endpointURL(baseURL string, path string) (string, error) {
+// EndpointURL joins path onto the SDK server's base URL, a proxy sub-path included, and fails for
+// a base URL that cannot be requested.
+func EndpointURL(baseURL string, path string) (string, error) {
 	base, err := url.Parse(baseURL)
 	if err != nil {
 		return "", fmt.Errorf("transport: the connection URL %q is not usable: %w", baseURL, err)
@@ -81,7 +85,9 @@ func newSessionID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", random[0:4], random[4:6], random[6:8], random[8:10], random[10:16])
 }
 
-func isFatalStatus(status int) bool {
+// IsFatalStatus reports whether a response status means the SDK server will keep refusing the
+// request, so that retrying is pointless: a 4xx other than 429.
+func IsFatalStatus(status int) bool {
 	return status >= 400 && status < 500 && status != http.StatusTooManyRequests
 }
 
@@ -97,7 +103,9 @@ func responseDetail(body io.Reader) string {
 	return strings.TrimSpace(string(detail))
 }
 
-func discardResponseBody(body io.ReadCloser) {
+// DiscardResponseBody reads a response body to its end, within the body cap, and closes it, so the
+// connection can be reused.
+func DiscardResponseBody(body io.ReadCloser) {
 	_, _ = io.Copy(io.Discard, io.LimitReader(body, maxResponseBodyBytes))
 	_ = body.Close()
 }

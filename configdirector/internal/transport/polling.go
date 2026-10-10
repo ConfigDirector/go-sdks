@@ -57,7 +57,7 @@ func openPolling(options Options, interval time.Duration, deliver func(data stri
 		timing:    timing,
 		sessionID: newSessionID(),
 	}
-	polling.endpoint, polling.endpointErr = endpointURL(options.BaseURL, pollingPath)
+	polling.endpoint, polling.endpointErr = EndpointURL(options.BaseURL, pollingPath)
 	go polling.run(ctx)
 	return polling
 }
@@ -135,7 +135,7 @@ func nextPollAfter(end pollEnd, retriedAtOnce bool, interval time.Duration) poll
 	switch {
 	case end.kind == pollEndClosed:
 		return pollStep{kind: pollStepStopClosed}
-	case end.kind == pollEndURLUnusable, end.kind == pollEndRefused && isFatalStatus(end.status):
+	case end.kind == pollEndURLUnusable, end.kind == pollEndRefused && IsFatalStatus(end.status):
 		return pollStep{kind: pollStepStopFatal}
 	case end.kind == pollEndNetworkFailure && !retriedAtOnce:
 		return pollStep{kind: pollStepRetryAtOnce}
@@ -184,7 +184,7 @@ func (polling *Polling) pollOnceUnlessClosed(ctx context.Context, lastUpdateTime
 	if err != nil {
 		return pollEndAfterRequestError(requestCtx, err, lastUpdateTimestamp)
 	}
-	defer discardResponseBody(response.Body)
+	defer DiscardResponseBody(response.Body)
 
 	switch {
 	case response.StatusCode == http.StatusNoContent:
@@ -222,7 +222,7 @@ func (polling *Polling) post(ctx context.Context, lastUpdateTimestamp string) (*
 		MetaContext:         polling.options.MetaContext,
 		LastUpdateTimestamp: lastUpdateTimestamp,
 	}
-	request, err := polling.options.jsonRequest(ctx, polling.endpoint, body)
+	request, err := polling.options.JSONRequest(ctx, polling.endpoint, body)
 	if err != nil {
 		return nil, err
 	}

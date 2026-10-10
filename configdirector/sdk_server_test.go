@@ -18,25 +18,29 @@ const (
 	streamPath    = "/server/sse/v1"
 	pollingPath   = "/server/polling/v1"
 	heartbeatPath = "/server/heartbeat/v1"
+	telemetryPath = "/server/telemetry/v1"
 
 	awaitTimeout = 5 * time.Second
 )
 
 type recordedRequest struct {
-	path   string
-	header http.Header
-	body   map[string]any
+	path     string
+	header   http.Header
+	body     map[string]any
+	bodyJSON []byte
 }
 
 type sdkServer struct {
 	*httptest.Server
-	requests        chan recordedRequest
-	initialPayloads []string
-	mutex           sync.Mutex
-	streams         map[chan string]struct{}
-	pollsAnswered   int
-	nextRefusal     int
-	dropNext        bool
+	requests          chan recordedRequest
+	telemetryRequests chan recordedRequest
+	initialPayloads   []string
+	mutex             sync.Mutex
+	streams           map[chan string]struct{}
+	pollsAnswered     int
+	nextRefusal       int
+	dropNext          bool
+	telemetryStatus   int
 }
 
 func startSDKServer(t *testing.T, initialPayloads ...string) *sdkServer {
@@ -47,9 +51,11 @@ func startSDKServer(t *testing.T, initialPayloads ...string) *sdkServer {
 func startSDKServerUnder(t *testing.T, pathPrefix string, initialPayloads ...string) *sdkServer {
 	t.Helper()
 	server := &sdkServer{
-		requests:        make(chan recordedRequest, 1024),
-		initialPayloads: initialPayloads,
-		streams:         map[chan string]struct{}{},
+		requests:          make(chan recordedRequest, 1024),
+		telemetryRequests: make(chan recordedRequest, 1024),
+		initialPayloads:   initialPayloads,
+		streams:           map[chan string]struct{}{},
+		telemetryStatus:   http.StatusNoContent,
 	}
 
 	mux := http.NewServeMux()
@@ -59,6 +65,7 @@ func startSDKServerUnder(t *testing.T, pathPrefix string, initialPayloads ...str
 		server.record(request)
 		writer.WriteHeader(http.StatusNoContent)
 	})
+	mux.HandleFunc("POST "+pathPrefix+telemetryPath, server.serveTelemetry)
 	server.Server = httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	return server
@@ -83,6 +90,12 @@ func (server *sdkServer) refuseNextRequest(status int) {
 	server.mutex.Lock()
 	defer server.mutex.Unlock()
 	server.nextRefusal = status
+}
+
+func (server *sdkServer) answerTelemetryWith(status int) {
+	server.mutex.Lock()
+	defer server.mutex.Unlock()
+	server.telemetryStatus = status
 }
 
 func (server *sdkServer) dropNextConnection() {
@@ -113,10 +126,22 @@ func (server *sdkServer) refused(writer http.ResponseWriter) bool {
 }
 
 func (server *sdkServer) record(request *http.Request) {
+	server.requests <- recordedRequestFrom(request)
+}
+
+func recordedRequestFrom(request *http.Request) recordedRequest {
 	raw, _ := io.ReadAll(request.Body)
 	var body map[string]any
 	_ = json.Unmarshal(raw, &body)
-	server.requests <- recordedRequest{path: request.URL.Path, header: request.Header.Clone(), body: body}
+	return recordedRequest{path: request.URL.Path, header: request.Header.Clone(), body: body, bodyJSON: raw}
+}
+
+func (server *sdkServer) serveTelemetry(writer http.ResponseWriter, request *http.Request) {
+	server.telemetryRequests <- recordedRequestFrom(request)
+	server.mutex.Lock()
+	status := server.telemetryStatus
+	server.mutex.Unlock()
+	writer.WriteHeader(status)
 }
 
 func (server *sdkServer) serveStream(writer http.ResponseWriter, request *http.Request) {
@@ -185,10 +210,15 @@ func (server *sdkServer) servePoll(writer http.ResponseWriter, request *http.Req
 
 func await[T any](t *testing.T, values <-chan T) T {
 	t.Helper()
+	return awaitFor(t, values, awaitTimeout)
+}
+
+func awaitFor[T any](t *testing.T, values <-chan T, timeout time.Duration) T {
+	t.Helper()
 	select {
 	case value := <-values:
 		return value
-	case <-time.After(awaitTimeout):
+	case <-time.After(timeout):
 		t.Fatal("nothing arrived within the await timeout")
 		var zero T
 		return zero

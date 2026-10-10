@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"github.com/ConfigDirector/go-sdks/configdirector/internal/connectionseam"
+	"github.com/ConfigDirector/go-sdks/configdirector/internal/telemetry"
 	"github.com/ConfigDirector/go-sdks/configdirector/internal/transport"
 )
 
@@ -23,11 +24,11 @@ func newClientOverConnection(options Options, open connectionseam.OpenConnection
 	}
 	return newClient(settings, options.Hooks, func(deliver func(document string)) connection {
 		return open(connectionseam.Receiver{Deliver: deliver, Logger: settings.logger})
-	}), nil
+	}, telemetry.Discarding{}), nil
 }
 
-func openTransport(settings clientSettings, deliver func(document string)) connection {
-	options := transport.Options{
+func (settings clientSettings) transportOptions() transport.Options {
+	return transport.Options{
 		SDKKey:  settings.sdkKey,
 		BaseURL: settings.baseURL,
 		MetaContext: transport.MetaContext{
@@ -39,6 +40,10 @@ func openTransport(settings clientSettings, deliver func(document string)) conne
 		HTTPClient: settings.httpClient,
 		Logger:     settings.logger,
 	}
+}
+
+func openTransport(settings clientSettings, deliver func(document string)) connection {
+	options := settings.transportOptions()
 	switch settings.mode {
 	case ConnectionModeStreaming:
 		return transport.OpenStreaming(options, deliver)
