@@ -35,6 +35,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.work
+          check-latest: true
           cache-dependency-path: "**/go.sum"
 
       # Reads Version, refuses a version whose tag already exists or that has no changelog

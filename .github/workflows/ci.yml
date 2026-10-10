@@ -17,6 +17,9 @@ defaults:
 env:
   # Never download another toolchain: each job runs on exactly the Go version it names, so a
   # go directive above the oldest supported release fails here instead of being papered over.
+  # check-latest makes every job run the newest patch of that version: the runner image's cached
+  # Go lags a patch release by days, and govulncheck reports the standard library of the Go that
+  # runs it, so the hardening job would otherwise fail on vulnerabilities a released patch fixed.
   GOTOOLCHAIN: local
 
 jobs:
@@ -29,6 +32,7 @@ jobs:
 
       - uses: actions/setup-go@v7
         with:
+          check-latest: true
           go-version-file: go.work
           cache-dependency-path: "**/go.sum"
 
@@ -52,6 +56,7 @@ jobs:
 
       - uses: actions/setup-go@v7
         with:
+          check-latest: true
           go-version: ${{ matrix.go }}
           cache-dependency-path: "**/go.sum"
 
@@ -66,11 +71,13 @@ jobs:
 
       - uses: actions/setup-go@v7
         with:
+          check-latest: true
           go-version-file: go.work
           cache-dependency-path: "**/go.sum"
 
       # govulncheck also scans the standard library of the Go that runs it, so this job fails
-      # once a vulnerability is published for the Go release the runner has until it is patched.
+      # from the day a vulnerability is published for the Go release it runs until the patch
+      # release that fixes it, which check-latest picks up as soon as it exists.
       - run: make vulncheck
       - run: make fuzz
 
@@ -83,6 +90,7 @@ jobs:
 
       - uses: actions/setup-go@v7
         with:
+          check-latest: true
           go-version-file: go.work
           cache-dependency-path: "**/go.sum"
 
