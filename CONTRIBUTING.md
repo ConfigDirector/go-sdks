@@ -35,14 +35,24 @@ make hooks         # pre-push hook that runs make check-all
 make check         # lint and test: the fast loop
 make samples-local # the sample apps against this working tree
 make check-all     # everything CI runs
+make benchmark     # the smoke benchmark of a read; a measurement, not a check
 ```
 
 `make lint` runs `gofmt`, `go vet` and `golangci-lint`, installing the version the Makefile pins
-under `.tools/` the first time. [.golangci.yml](.golangci.yml) enables a strict set of linters on
-top of the standard preset; a finding is fixed, not silenced. `make format` formats every module
-and sample. `make test-race` runs the tests with the race detector, as CI does, and
-`make verify-tidy` fails when a module's or a sample's `go.mod` or `go.sum` differs from what
-`go mod tidy` would write.
+under `.tools/` the first time. [.golangci.yml](.golangci.yml) enables a strict set of linters,
+`gosec` among them, on top of the standard preset; a finding is fixed, not silenced. `make format`
+formats every module and sample. `make test-race` runs the tests with the race detector, as CI
+does, and `make verify-tidy` fails when a module's or a sample's `go.mod` or `go.sum` differs
+from what `go mod tidy` would write.
+
+`make vulncheck` runs `govulncheck` over each module, installing the pinned version under
+`.tools/` the first time. It also scans the standard library of the Go that runs it, so it fails
+on a Go that is behind its latest patch release; upgrade Go rather than silence it. `make fuzz`
+runs every fuzz target listed in the Makefile for 20 seconds each: the parsers that take input
+from the network, which are the event-stream parser, the server SDK payload decoder, the value
+parser and the JSON pointer lookup into a context's traits. A failing input is written under the
+package's `testdata/fuzz/` directory, where it replays as a regular test; fix the cause and keep
+the file. Both run in `make check-all` and in CI.
 
 The checks live in the [Makefile](Makefile). CI and the pre-push hook only call `make` targets,
 so add new checks there rather than in either of them.

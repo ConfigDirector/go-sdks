@@ -40,16 +40,27 @@ type sdkServer struct {
 	streams           map[chan string]struct{}
 	pollsAnswered     int
 	nextRefusal       int
+	refusalBody       string
 	dropNext          bool
 	telemetryStatus   int
 }
 
-func startSDKServer(t *testing.T, initialPayloads ...string) *sdkServer {
+func startSDKServer(t testing.TB, initialPayloads ...string) *sdkServer {
 	t.Helper()
 	return startSDKServerUnder(t, "", initialPayloads...)
 }
 
-func startSDKServerUnder(t *testing.T, pathPrefix string, initialPayloads ...string) *sdkServer {
+func startSDKServerUnder(t testing.TB, pathPrefix string, initialPayloads ...string) *sdkServer {
+	t.Helper()
+	return serveSDKServer(t, pathPrefix, httptest.NewServer, initialPayloads)
+}
+
+func startTLSSDKServer(t testing.TB, initialPayloads ...string) *sdkServer {
+	t.Helper()
+	return serveSDKServer(t, "", httptest.NewTLSServer, initialPayloads)
+}
+
+func serveSDKServer(t testing.TB, pathPrefix string, serve func(http.Handler) *httptest.Server, initialPayloads []string) *sdkServer {
 	t.Helper()
 	server := &sdkServer{
 		requests:          make(chan recordedRequest, 1024),
@@ -67,7 +78,7 @@ func startSDKServerUnder(t *testing.T, pathPrefix string, initialPayloads ...str
 		writer.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("POST "+pathPrefix+telemetryPath, server.serveTelemetry)
-	server.Server = httptest.NewServer(mux)
+	server.Server = serve(mux)
 	t.Cleanup(server.Close)
 	return server
 }
@@ -88,9 +99,14 @@ func (server *sdkServer) send(payload string) {
 }
 
 func (server *sdkServer) refuseNextRequest(status int) {
+	server.refuseNextRequestWith(status, "")
+}
+
+func (server *sdkServer) refuseNextRequestWith(status int, body string) {
 	server.mutex.Lock()
 	defer server.mutex.Unlock()
 	server.nextRefusal = status
+	server.refusalBody = body
 }
 
 func (server *sdkServer) answerTelemetryWith(status int) {
@@ -108,8 +124,10 @@ func (server *sdkServer) dropNextConnection() {
 func (server *sdkServer) refused(writer http.ResponseWriter) bool {
 	server.mutex.Lock()
 	status := server.nextRefusal
+	body := server.refusalBody
 	drop := server.dropNext
 	server.nextRefusal = 0
+	server.refusalBody = ""
 	server.dropNext = false
 	server.mutex.Unlock()
 	switch {
@@ -120,6 +138,7 @@ func (server *sdkServer) refused(writer http.ResponseWriter) bool {
 		return true
 	case status != 0:
 		writer.WriteHeader(status)
+		_, _ = io.WriteString(writer, body)
 		return true
 	default:
 		return false
@@ -209,12 +228,12 @@ func (server *sdkServer) servePoll(writer http.ResponseWriter, request *http.Req
 	_, _ = io.WriteString(writer, server.initialPayloads[answered])
 }
 
-func await[T any](t *testing.T, values <-chan T) T {
+func await[T any](t testing.TB, values <-chan T) T {
 	t.Helper()
 	return awaitFor(t, values, awaitTimeout)
 }
 
-func awaitFor[T any](t *testing.T, values <-chan T, timeout time.Duration) T {
+func awaitFor[T any](t testing.TB, values <-chan T, timeout time.Duration) T {
 	t.Helper()
 	select {
 	case value := <-values:
@@ -238,7 +257,7 @@ func (recorder *recorder[T]) record(value T) {
 	recorder.values <- value
 }
 
-func (recorder *recorder[T]) next(t *testing.T) T {
+func (recorder *recorder[T]) next(t testing.TB) T {
 	t.Helper()
 	return await(t, recorder.values)
 }

@@ -71,3 +71,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   the read asked for (`bool`, `string`, `int64`, `float64`, or the target's type for `JSONValue`);
   JSON documents and values longer than 500 characters travel as a value id. A
   `configdirectortest` client sends no telemetry.
+
+### Security
+
+- The SDK key appears in no log record: a refusal whose body echoes it is logged with the key
+  redacted, and a refusal's body is logged up to 1 KiB.

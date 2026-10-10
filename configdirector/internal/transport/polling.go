@@ -191,7 +191,7 @@ func (polling *Polling) pollOnceUnlessClosed(ctx context.Context, lastUpdateTime
 	case response.StatusCode == http.StatusNoContent:
 		return pollEnd{kind: pollEndUnchanged, lastUpdateTimestamp: lastUpdateTimestamp}
 	case response.StatusCode < 200 || response.StatusCode > 299:
-		return refusedPollEnd(response, lastUpdateTimestamp)
+		return polling.refusedPollEnd(response, lastUpdateTimestamp)
 	}
 
 	body, err := readWholeBody(response.Body)
@@ -237,11 +237,11 @@ func pollEndAfterRequestError(requestCtx context.Context, err error, lastUpdateT
 	return pollEnd{kind: pollEndNetworkFailure, err: err, lastUpdateTimestamp: lastUpdateTimestamp}
 }
 
-func refusedPollEnd(response *http.Response, lastUpdateTimestamp string) pollEnd {
+func (polling *Polling) refusedPollEnd(response *http.Response, lastUpdateTimestamp string) pollEnd {
 	end := pollEnd{
 		kind:                pollEndRefused,
 		status:              response.StatusCode,
-		err:                 refusalError(response.StatusCode, responseDetail(response.Body)),
+		err:                 polling.options.redactedRefusalError(response),
 		lastUpdateTimestamp: lastUpdateTimestamp,
 	}
 	if response.StatusCode == http.StatusTooManyRequests {

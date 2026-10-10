@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"math/rand/v2"
 	"net/http"
 	"sync"
 	"time"
@@ -94,7 +93,7 @@ func (streaming *Streaming) run(ctx context.Context) {
 		end := streaming.streamOnce(ctx, lastEventID)
 		lastEventID = end.lastEventID
 
-		step := nextStepAfter(end, attempt, rand.Float64())
+		step := nextStepAfter(end, attempt, randomFraction())
 		switch step.kind {
 		case nextStepStopClosed:
 			return
@@ -224,7 +223,7 @@ func (streaming *Streaming) streamOnceUnlessClosed(ctx context.Context, lastEven
 	defer func() { _ = response.Body.Close() }()
 
 	if response.StatusCode < 200 || response.StatusCode > 299 {
-		return refusedStreamEnd(response, lastEventID)
+		return streaming.refusedStreamEnd(response, lastEventID)
 	}
 	connectTimer.Stop()
 	return streaming.readStream(ctx, response, sessionID, lastEventID)
@@ -243,11 +242,11 @@ func (streaming *Streaming) openStream(ctx context.Context, sessionID string, la
 	return streaming.options.HTTPClient.Do(request)
 }
 
-func refusedStreamEnd(response *http.Response, lastEventID string) streamEnd {
+func (streaming *Streaming) refusedStreamEnd(response *http.Response, lastEventID string) streamEnd {
 	end := streamEnd{
 		kind:        streamEndRefused,
 		status:      response.StatusCode,
-		err:         refusalError(response.StatusCode, responseDetail(response.Body)),
+		err:         streaming.options.redactedRefusalError(response),
 		lastEventID: lastEventID,
 	}
 	if response.StatusCode == http.StatusTooManyRequests {

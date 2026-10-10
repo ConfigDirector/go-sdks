@@ -1,0 +1,3 @@
+go test fuzz v1
+string("/k/k/k/k/k/k/k/k/k/k/k/k/k/k/k/k/k/k/k/k/k/k/k/k/k/k/k/k/k/k/k/k")
+string("k")

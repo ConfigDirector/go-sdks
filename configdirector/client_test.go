@@ -11,7 +11,7 @@ import (
 
 var noUser = configdirector.UserContext{}
 
-func newClient(t *testing.T, options configdirector.Options) *configdirector.Client {
+func newClient(t testing.TB, options configdirector.Options) *configdirector.Client {
 	t.Helper()
 	client, err := configdirector.NewClient(options)
 	require.NoError(t, err)
@@ -19,19 +19,19 @@ func newClient(t *testing.T, options configdirector.Options) *configdirector.Cli
 	return client
 }
 
-func newClientAgainst(t *testing.T, server *sdkServer) *configdirector.Client {
+func newClientAgainst(t testing.TB, server *sdkServer) *configdirector.Client {
 	t.Helper()
 	return newClient(t, server.options())
 }
 
-func newReadyClient(t *testing.T) *configdirector.Client {
+func newReadyClient(t testing.TB) *configdirector.Client {
 	t.Helper()
 	client := newClientAgainst(t, startSDKServer(t, standardPayload().json()))
 	waitForReady(t, client)
 	return client
 }
 
-func waitForReady(t *testing.T, client *configdirector.Client) {
+func waitForReady(t testing.TB, client *configdirector.Client) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

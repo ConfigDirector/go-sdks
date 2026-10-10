@@ -1,6 +1,7 @@
 package evaluation
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -115,4 +116,42 @@ func TestTraitAtPointerSelectsNothingBelowAMissingMember(t *testing.T) {
 
 func TestTraitAtPointerOnNilTraitsSelectsNothing(t *testing.T) {
 	require.Nil(t, traitAtPointer(nil, "/x"))
+}
+
+func escapedPointerToken(member string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(member, "~", "~0"), "/", "~1")
+}
+
+// FuzzTraitAtPointer checks that a lookup never panics, selects nothing in nil traits or
+// through a pointer without a leading slash, and that a member of the traits is selected by
+// exactly one pointer: the slash followed by its escaped name.
+func FuzzTraitAtPointer(f *testing.F) {
+	f.Add("/a/b", "a")
+	f.Add("/a~1b~0c/d~0~1e", "a/b~c")
+	f.Add("/a~1b", "a/b")
+	f.Add("/a/b", "a/b")
+	f.Add("/list/0", "list")
+	f.Add("", "")
+	f.Add("/", "")
+	f.Add("/a~", "a~")
+	f.Add("/a~2", "a~2")
+	f.Add("#/foo", "foo")
+	f.Add("/c%25d", "c%d")
+
+	f.Fuzz(func(t *testing.T, pointer string, member string) {
+		traits := map[string]any{member: "found"}
+		onlyPointerToMember := "/" + escapedPointerToken(member)
+
+		require.Nil(t, traitAtPointer(nil, pointer))
+		if !strings.HasPrefix(pointer, "/") {
+			require.Nil(t, traitAtPointer(traits, pointer))
+		}
+		require.Equal(t, "found", traitAtPointer(traits, onlyPointerToMember))
+		selected := traitAtPointer(traits, pointer)
+		if pointer == onlyPointerToMember {
+			require.Equal(t, "found", selected)
+		} else {
+			require.Nil(t, selected)
+		}
+	})
 }

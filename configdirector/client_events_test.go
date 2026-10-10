@@ -2,6 +2,7 @@ package configdirector_test
 
 import (
 	"log/slog"
+	"sync"
 	"testing"
 
 	"github.com/ConfigDirector/go-sdks/configdirector"
@@ -426,6 +427,49 @@ func TestAPanickingReadyHandlerDoesNotStopTheClientBecomingReady(t *testing.T) {
 	waitForReady(t, client)
 	require.Len(t, recordsAt(slog.LevelError, records()), 1)
 	require.Equal(t, "ready", attributesOf(recordsAt(slog.LevelError, records())[0])["event"])
+}
+
+func TestAHandlerMayReadAValueFromInsideOnConfigsUpdated(t *testing.T) {
+	t.Parallel()
+	server := startSDKServer(t)
+	client := newClientAgainst(t, server)
+	values := newRecorder[bool]()
+	client.OnConfigsUpdated(func(configdirector.ConfigsUpdated) { values.record(client.BoolValue("a", false, noUser)) })
+	await(t, server.requests)
+
+	server.send(fullPayload(boolConfig("a", "true")).json())
+
+	require.True(t, values.next(t))
+}
+
+func TestAWatchHandlerMayReadAnotherValueFromInsideItsNotification(t *testing.T) {
+	t.Parallel()
+	server := startSDKServer(t)
+	client := newClientAgainst(t, server)
+	values := newRecorder[string]()
+	client.WatchBool("a", false, noUser, func(bool) { values.record(client.StringValue("b", "fallback", noUser)) })
+	await(t, server.requests)
+
+	server.send(fullPayload(boolConfig("a", "true"), textConfig("b", "served")).json())
+
+	require.Equal(t, "served", values.next(t))
+}
+
+func TestAHandlerMayRegisterAWatchFromInsideOnConfigsUpdated(t *testing.T) {
+	t.Parallel()
+	server := startSDKServer(t)
+	client := newClientAgainst(t, server)
+	values := newRecorder[string]()
+	var once sync.Once
+	client.OnConfigsUpdated(func(configdirector.ConfigsUpdated) {
+		once.Do(func() { client.WatchString("a", "fallback", noUser, values.record) })
+	})
+	await(t, server.requests)
+
+	server.send(fullPayload(textConfig("a", "1")).json())
+	server.send(deltaPayload(textConfig("a", "2")).json())
+
+	require.Equal(t, "2", values.next(t))
 }
 
 func TestUnsubscribingAHandlerStopsDelivery(t *testing.T) {

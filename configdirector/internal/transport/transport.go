@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,7 +20,15 @@ import (
 	"time"
 )
 
-const maxResponseBodyBytes = 32 << 20
+const (
+	maxResponseBodyBytes  = 32 << 20
+	maxRefusalDetailBytes = 1 << 10
+)
+
+const (
+	redactedSDKKey        = "[the SDK key]"
+	truncatedDetailMarker = "…"
+)
 
 const (
 	jsonContentType        = "application/json"
@@ -90,6 +99,12 @@ func EndpointURL(baseURL string, path string) (string, error) {
 	return base.JoinPath(path).String(), nil
 }
 
+func randomFraction() float64 {
+	var random [8]byte
+	_, _ = rand.Read(random[:])
+	return float64(binary.BigEndian.Uint64(random[:])>>11) / (1 << 53)
+}
+
 func newSessionID() string {
 	var random [16]byte
 	_, _ = rand.Read(random[:])
@@ -104,6 +119,11 @@ func IsFatalStatus(status int) bool {
 	return status >= 400 && status < 500 && status != http.StatusTooManyRequests
 }
 
+func (options Options) redactedRefusalError(response *http.Response) error {
+	detail := strings.ReplaceAll(responseDetail(response.Body), options.SDKKey, redactedSDKKey)
+	return refusalError(response.StatusCode, detail)
+}
+
 func refusalError(status int, detail string) error {
 	if detail == "" {
 		return fmt.Errorf("transport: the SDK server answered with status %d", status)
@@ -112,7 +132,10 @@ func refusalError(status int, detail string) error {
 }
 
 func responseDetail(body io.Reader) string {
-	detail, _ := io.ReadAll(io.LimitReader(body, maxResponseBodyBytes))
+	detail, _ := io.ReadAll(io.LimitReader(body, maxRefusalDetailBytes+1))
+	if len(detail) > maxRefusalDetailBytes {
+		return strings.TrimSpace(string(detail[:maxRefusalDetailBytes])) + truncatedDetailMarker
+	}
 	return strings.TrimSpace(string(detail))
 }
 

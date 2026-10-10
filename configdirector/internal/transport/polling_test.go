@@ -273,6 +273,17 @@ func TestA401StopsPollingWithOneErrorLog(t *testing.T) {
 	require.NoError(t, opened.Close())
 }
 
+func TestAPollRefusalThatEchoesTheSDKKeyIsLoggedWithoutIt(t *testing.T) {
+	server := startSDKServer(t, refuseWith(http.StatusUnauthorized, `{"error":"`+testSDKKey+` is not a server SDK key"}`))
+
+	opened := openPollingAgainst(t, server)
+
+	await(t, server.requests)
+	require.Eventually(t, func() bool { return opened.logs.recordsAt(slog.LevelError) == 1 }, awaitTimeout, 10*time.Millisecond)
+	require.Equal(t, []string{`transport: the SDK server answered with status 401: {"error":"[the SDK key] is not a server SDK key"}`}, opened.logs.errorCauses())
+	require.NoError(t, opened.Close())
+}
+
 func TestA404OnTheRetryStopsPolling(t *testing.T) {
 	server := startSDKServer(t, dropConnection(), refuse(http.StatusNotFound))
 

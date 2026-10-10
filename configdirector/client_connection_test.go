@@ -4,6 +4,9 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -92,6 +95,49 @@ func TestEveryRequestGoesThroughTheConfiguredHTTPClient(t *testing.T) {
 	waitForReady(t, client)
 
 	require.Equal(t, int64(1), counting.requests.Load())
+}
+
+func TestASuppliedHTTPClientConnectsWithItsOwnTLSConfiguration(t *testing.T) {
+	t.Parallel()
+	server := startTLSSDKServer(t, standardPayload().json())
+
+	client := newClientAgainst(t, server)
+	waitForReady(t, client)
+
+	require.True(t, client.BoolValue("new-checkout", false, noUser))
+}
+
+func TestASuppliedHTTPClientSendsEveryRequestThroughItsProxy(t *testing.T) {
+	t.Parallel()
+	server := startSDKServer(t, standardPayload().json())
+	proxiedHosts := make(chan string, 16)
+	proxy := startForwardProxy(t, server.URL, proxiedHosts)
+	options := server.options()
+	options.Connection.Mode = configdirector.ConnectionModePolling
+	options.Connection.URL = "http://sdk-server.invalid"
+	options.Connection.HTTPClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
+
+	client := newClient(t, options)
+	waitForReady(t, client)
+
+	require.Equal(t, "sdk-server.invalid", await(t, proxiedHosts))
+	require.Equal(t, pollingPath, await(t, server.requests).path)
+	require.True(t, client.BoolValue("new-checkout", false, noUser))
+}
+
+func startForwardProxy(t *testing.T, upstreamURL string, proxiedHosts chan<- string) *url.URL {
+	t.Helper()
+	upstream, err := url.Parse(upstreamURL)
+	require.NoError(t, err)
+	forward := httputil.NewSingleHostReverseProxy(upstream)
+	proxy := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		proxiedHosts <- request.Host
+		forward.ServeHTTP(writer, request)
+	}))
+	t.Cleanup(proxy.Close)
+	proxyURL, err := url.Parse(proxy.URL)
+	require.NoError(t, err)
+	return proxyURL
 }
 
 func TestStreamingKeepsConnectingAfterTheReadinessWaitTimesOut(t *testing.T) {

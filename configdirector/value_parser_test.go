@@ -1,7 +1,11 @@
 package configdirector
 
 import (
+	"encoding/json"
+	"math"
 	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -265,4 +269,78 @@ func TestJSONTreatsAPlainStringConfigAsInvalid(t *testing.T) {
 
 	require.Equal(t, EvaluationReasonInvalidJSON, reason)
 	require.Equal(t, map[string]any{"a": 1}, target)
+}
+
+// FuzzParseValue checks that reading a served value as each type never panics, reads a boolean
+// by lower-casing rather than case folding, accepts every whole number and decodable JSON
+// document the standard library does, and that a JSON document that cannot be decoded leaves
+// the target as it was.
+func FuzzParseValue(f *testing.F) {
+	f.Add("")
+	f.Add("true")
+	f.Add("FALSE")
+	f.Add("yes")
+	f.Add("1")
+	f.Add("26")
+	f.Add("26.0")
+	f.Add("2.6e1")
+	f.Add("-0")
+	f.Add("1e400")
+	f.Add("NaN")
+	f.Add("Infinity")
+	f.Add("1_000")
+	f.Add("٢٦")
+	f.Add("26abc")
+	f.Add(" 26")
+	f.Add("9223372036854775807")
+	f.Add("9223372036854775808")
+	f.Add("9007199254740993")
+	f.Add("3.14")
+	f.Add("10")
+	f.Add("25")
+	f.Add("abc")
+	f.Add(`{"max":20,"min":1}`)
+	f.Add(`["eu","us"]`)
+	f.Add("{not json")
+	f.Add(`"text"`)
+	f.Add("null")
+	f.Add(`{"Max":"x"}`)
+	f.Add(`{"Max":9,"Min":"x"}`)
+
+	f.Fuzz(func(t *testing.T, text string) {
+		boolean, booleanReason := boolFrom(stateWith(ConfigTypeBoolean, text))
+		lowered := strings.ToLower(text)
+		if lowered == "true" || lowered == "false" {
+			require.Equal(t, EvaluationReasonFoundMatch, booleanReason)
+			require.Equal(t, lowered == "true", boolean)
+		} else {
+			require.Equal(t, EvaluationReasonInvalidBoolean, booleanReason)
+		}
+
+		whole, wholeReason := int64From(stateWith(ConfigTypeInteger, text))
+		if parsed, err := strconv.ParseInt(text, 10, 64); err == nil {
+			require.Equal(t, EvaluationReasonFoundMatch, wholeReason)
+			require.Equal(t, parsed, whole)
+		}
+		number, numberReason := float64From(stateWith(ConfigTypeFloat, text))
+		if wholeReason == EvaluationReasonFoundMatch {
+			require.Equal(t, EvaluationReasonFoundMatch, numberReason)
+			require.Equal(t, float64(whole), number)
+		}
+		if numberReason == EvaluationReasonFoundMatch {
+			require.False(t, math.IsNaN(number) || math.IsInf(number, 0))
+			reparsed, err := strconv.ParseFloat(strconv.FormatFloat(number, 'g', -1, 64), 64)
+			require.NoError(t, err)
+			require.Equal(t, number, reparsed)
+		}
+
+		var document any
+		documentReason := decodeJSONInto(stateWith(ConfigTypeJSON, text), reflect.ValueOf(&document))
+		require.Equal(t, json.Unmarshal([]byte(text), new(any)) == nil, documentReason == EvaluationReasonFoundMatch)
+		untouchedLimits := struct{ Max, Min int }{Max: 7, Min: 1}
+		limits := untouchedLimits
+		if decodeJSONInto(stateWith(ConfigTypeJSON, text), reflect.ValueOf(&limits)) != EvaluationReasonFoundMatch {
+			require.Equal(t, untouchedLimits, limits)
+		}
+	})
 }

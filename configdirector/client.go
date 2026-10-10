@@ -137,7 +137,9 @@ func (client *Client) Closed() bool {
 // Close stops the connection, cancels every handler and watch, sends the telemetry collected
 // since the last report, and releases the client's goroutines. After Close the client is not
 // ready and every read returns its in-code default value. Calling Close more than once is
-// harmless and returns the first call's result.
+// harmless and returns the first call's result. Handlers run on the connection's goroutine,
+// which Close waits for, so a Close called from inside a handler waits out the 5 second close
+// timeout and returns its error.
 func (client *Client) Close() error {
 	client.closeOnce.Do(func() {
 		client.mutex.Lock()

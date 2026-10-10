@@ -1,4 +1,4 @@
-.PHONY: hooks format lint verify-tidy test test-race samples-local check check-all clean
+.PHONY: hooks format lint verify-tidy vulncheck test test-race fuzz benchmark samples-local check check-all clean
 
 # Every module this repository publishes, each in a directory named after the last element of its
 # module path. The root go.work lists the same two; `./...` from here would match none of them,
@@ -13,9 +13,20 @@ PACKAGES := $(foreach module,$(MODULES),./$(module)/...)
 SAMPLES := samples/configdirector/gin
 SAMPLES_WORKSPACE := $(CURDIR)/.tools/samples/go.work
 
-# The binary's path carries the version, so bumping the version reinstalls it on the next run.
+# Each binary's path carries its version, so bumping the version reinstalls it on the next run.
 GOLANGCI_LINT_VERSION := v2.14.0
 GOLANGCI_LINT := .tools/golangci-lint/$(GOLANGCI_LINT_VERSION)/golangci-lint$(if $(filter Windows_NT,$(OS)),.exe)
+GOVULNCHECK_VERSION := v1.8.0
+GOVULNCHECK := .tools/govulncheck/$(GOVULNCHECK_VERSION)/govulncheck$(if $(filter Windows_NT,$(OS)),.exe)
+
+# The fuzz targets, each as <package directory>:<target>. `go test -fuzz` takes one target in one
+# package per run, and CI gives each one this budget.
+FUZZ_TARGETS := \
+	configdirector:FuzzParseValue \
+	configdirector:FuzzParseServerPayload \
+	configdirector/internal/evaluation:FuzzTraitAtPointer \
+	configdirector/internal/eventsource:FuzzParse
+FUZZ_TIME := 20s
 
 hooks:
 	git config core.hooksPath .githooks
@@ -46,6 +57,19 @@ verify-tidy:
 		(cd "$$module" && go mod tidy -diff) || exit 1; \
 	done
 
+$(GOVULNCHECK):
+	@printf '\n\033[1m==> install govulncheck %s\033[0m\n' "$(GOVULNCHECK_VERSION)"
+	GOBIN="$(CURDIR)/$(dir $@)" go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
+
+# Reports known vulnerabilities in code the modules reach, the standard library of the Go that
+# runs the check included: a finding there means that Go is behind its latest patch release.
+# govulncheck reads one module at a time, so each is scanned from its own directory.
+vulncheck: $(GOVULNCHECK)
+	@for module in $(MODULES); do \
+		printf '\n\033[1m==> vulncheck %s\033[0m\n' "$$module"; \
+		(cd "$$module" && "$(CURDIR)/$(GOVULNCHECK)" ./...) || exit 1; \
+	done
+
 test:
 	@printf '\n\033[1m==> test\033[0m\n'
 	go test $(PACKAGES)
@@ -53,6 +77,20 @@ test:
 test-race:
 	@printf '\n\033[1m==> test-race\033[0m\n'
 	go test -race $(PACKAGES)
+
+# Runs every fuzz target for its budget, after its seed corpus. A failing input is written under
+# the package's testdata/fuzz/<target>/ directory and replays as a regular test from then on.
+fuzz:
+	@for target in $(FUZZ_TARGETS); do \
+		package="./$${target%%:*}"; name="$${target##*:}"; \
+		printf '\n\033[1m==> fuzz %s in %s for %s\033[0m\n' "$$name" "$$package" "$(FUZZ_TIME)"; \
+		go test -run='^$$' -fuzz='^'"$$name"'$$' -fuzztime=$(FUZZ_TIME) "$$package" || exit 1; \
+	done
+
+# A measurement, not a check: the smoke benchmark of a read.
+benchmark:
+	@printf '\n\033[1m==> benchmark\033[0m\n'
+	go test -run='^$$' -bench=. -benchmem ./configdirector/
 
 # Lints and tests every sample against the modules in this working tree, which is what catches a
 # breaking API change before it ships. From a sample's own directory, `GOWORK=off go test ./...`
@@ -73,7 +111,7 @@ samples-local: $(GOLANGCI_LINT)
 check: lint test
 
 # Everything CI runs. The pre-push hook calls this.
-check-all: verify-tidy lint test-race samples-local
+check-all: verify-tidy lint vulncheck test-race fuzz samples-local
 	@printf '\n\033[1m✓ all checks passed\033[0m\n'
 
 clean:

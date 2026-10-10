@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -87,9 +88,13 @@ func startSDKServer(t *testing.T, scripts ...http.HandlerFunc) *sdkServer {
 }
 
 func refuse(status int) http.HandlerFunc {
+	return refuseWith(status, "refused")
+}
+
+func refuseWith(status int, body string) http.HandlerFunc {
 	return func(writer http.ResponseWriter, _ *http.Request) {
 		writer.WriteHeader(status)
-		_, _ = io.WriteString(writer, "refused")
+		_, _ = io.WriteString(writer, body)
 	}
 }
 
@@ -189,6 +194,24 @@ func (recorder *logRecorder) recordsAt(level slog.Level) int {
 		}
 	}
 	return count
+}
+
+func (recorder *logRecorder) errorCauses() []string {
+	recorder.mutex.Lock()
+	defer recorder.mutex.Unlock()
+	var causes []string
+	for _, record := range recorder.records {
+		if record.Level != slog.LevelError {
+			continue
+		}
+		record.Attrs(func(attr slog.Attr) bool {
+			if attr.Key == "cause" {
+				causes = append(causes, fmt.Sprint(attr.Value.Any()))
+			}
+			return true
+		})
+	}
+	return causes
 }
 
 func (recorder *logRecorder) levelsByAttempt() map[int64]slog.Level {
@@ -628,6 +651,26 @@ func TestA401StopsRetryingWithOneErrorLog(t *testing.T) {
 	require.Equal(t, 1, opened.logs.recordsAt(slog.LevelError))
 }
 
+func TestARefusalThatEchoesTheSDKKeyIsLoggedWithoutIt(t *testing.T) {
+	server := startSDKServer(t, refuseWith(http.StatusUnauthorized, `{"error":"`+testSDKKey+` is not a server SDK key"}`))
+
+	opened := openStreamingAgainst(t, server)
+
+	await(t, server.requests)
+	require.Eventually(t, func() bool { return opened.logs.recordsAt(slog.LevelError) == 1 }, awaitTimeout, 10*time.Millisecond)
+	require.Equal(t, []string{`transport: the SDK server answered with status 401: {"error":"[the SDK key] is not a server SDK key"}`}, opened.logs.errorCauses())
+}
+
+func TestARefusalBodyIsLoggedUpToOneKiB(t *testing.T) {
+	server := startSDKServer(t, refuseWith(http.StatusUnauthorized, strings.Repeat("x", 4096)))
+
+	opened := openStreamingAgainst(t, server)
+
+	await(t, server.requests)
+	require.Eventually(t, func() bool { return opened.logs.recordsAt(slog.LevelError) == 1 }, awaitTimeout, 10*time.Millisecond)
+	require.Equal(t, []string{"transport: the SDK server answered with status 401: " + strings.Repeat("x", 1024) + "…"}, opened.logs.errorCauses())
+}
+
 func TestA404StopsRetryingWithOneErrorLog(t *testing.T) {
 	server := startSDKServer(t, refuse(http.StatusNotFound))
 
@@ -1010,12 +1053,20 @@ func TestNextStepCountsAnUnreachableServerAsAnotherAttempt(t *testing.T) {
 	require.Equal(t, nextStep{kind: nextStepReconnect, attempt: 6, delay: 32 * time.Second, logLevel: slog.LevelWarn}, step)
 }
 
-func TestResponseDetailIsCappedAtThirtyTwoMiB(t *testing.T) {
-	body := strings.NewReader(strings.Repeat("x", maxResponseBodyBytes+1))
+func TestResponseDetailIsCappedAtOneKiBWithATruncationMarker(t *testing.T) {
+	body := strings.NewReader(strings.Repeat("x", maxRefusalDetailBytes+1))
 
 	detail := responseDetail(body)
 
-	require.Len(t, detail, maxResponseBodyBytes)
+	require.Equal(t, strings.Repeat("x", maxRefusalDetailBytes)+"…", detail)
+}
+
+func TestResponseDetailOfExactlyOneKiBIsNotTruncated(t *testing.T) {
+	body := strings.NewReader(strings.Repeat("x", maxRefusalDetailBytes))
+
+	detail := responseDetail(body)
+
+	require.Equal(t, strings.Repeat("x", maxRefusalDetailBytes), detail)
 }
 
 func TestResponseDetailTrimsSurroundingWhitespace(t *testing.T) {

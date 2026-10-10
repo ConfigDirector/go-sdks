@@ -56,6 +56,23 @@ jobs:
 
       - run: make test-race
 
+  hardening:
+    name: Vulnerabilities and fuzzing
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+          cache-dependency-path: "**/go.sum"
+
+      # govulncheck also scans the standard library of the Go that runs it, so this job fails
+      # once a vulnerability is published for the Go release the runner has until it is patched.
+      - run: make vulncheck
+      - run: make fuzz
+
   samples:
     name: Sample apps
     runs-on: ubuntu-latest
