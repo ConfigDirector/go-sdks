@@ -33,7 +33,7 @@ func withUnreadable(payload serverPayload, keys ...string) serverPayload {
 
 func valuesOf(snapshot *configSnapshot) map[string]string {
 	values := map[string]string{}
-	for _, state := range snapshot.statesOf(snapshot.keys(), evaluation.EvaluationContext{}) {
+	for _, state := range snapshot.statesOf(snapshot.keys(), evaluation.Context{}) {
 		values[state.Key] = state.Value
 	}
 	return values

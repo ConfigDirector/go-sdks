@@ -236,8 +236,8 @@ func TestLastEventIDAcceptsAnEmptyId(t *testing.T) {
 
 	events, _ := readEvents(t, reader)
 
-	require.Equal(t, "", events[1].LastEventID)
-	require.Equal(t, "", reader.LastEventID())
+	require.Empty(t, events[1].LastEventID)
+	require.Empty(t, reader.LastEventID())
 }
 
 func TestLastEventIDStartsFromTheOptions(t *testing.T) {

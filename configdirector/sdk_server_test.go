@@ -32,6 +32,7 @@ type recordedRequest struct {
 
 type sdkServer struct {
 	*httptest.Server
+
 	requests          chan recordedRequest
 	telemetryRequests chan recordedRequest
 	initialPayloads   []string

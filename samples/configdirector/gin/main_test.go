@@ -26,7 +26,7 @@ func TestConfigsReturnsTheFiveConfigsAsServed(t *testing.T) {
 	t.Parallel()
 	router := newRouter(newTestClient(t, servedValues).Client())
 
-	response := get(router, "/configs?id=user-123&plan=pro")
+	response := get(t, router, "/configs?id=user-123&plan=pro")
 
 	require.Equal(t, http.StatusOK, response.Code)
 	assert.JSONEq(t, `{
@@ -42,7 +42,7 @@ func TestConfigsReturnsTheInCodeDefaultValuesWhenNoneAreServed(t *testing.T) {
 	t.Parallel()
 	router := newRouter(newTestClient(t, nil).Client())
 
-	response := get(router, "/configs?id=user-123&plan=pro")
+	response := get(t, router, "/configs?id=user-123&plan=pro")
 
 	require.Equal(t, http.StatusOK, response.Code)
 	assert.JSONEq(t, `{
@@ -58,10 +58,10 @@ func TestConfigsFollowAValueChangedAfterTheFirstRequest(t *testing.T) {
 	t.Parallel()
 	testClient := newTestClient(t, servedValues)
 	router := newRouter(testClient.Client())
-	get(router, "/configs?id=user-123")
+	get(t, router, "/configs?id=user-123")
 
 	require.NoError(t, testClient.SetValue("integer-config", 30))
-	response := get(router, "/configs?id=user-123")
+	response := get(t, router, "/configs?id=user-123")
 
 	require.Equal(t, http.StatusOK, response.Code)
 	var body map[string]any
@@ -77,7 +77,7 @@ func TestTheQueryStringBecomesTheUserContextOfEveryEvaluation(t *testing.T) {
 	}
 	router := newRouter(newTestClient(t, nil, configdirectortest.WithHooks(configdirector.Hooks{OnConfigEvaluated: recordEvaluation})).Client())
 
-	get(router, "/configs?id=user-123&name=Ada&anonymous=true&plan=pro&region=eu")
+	get(t, router, "/configs?id=user-123&name=Ada&anonymous=true&plan=pro&region=eu")
 
 	ada := configdirector.UserContext{
 		ID:        "user-123",
@@ -98,7 +98,7 @@ func TestAnUnknownRouteReturnsAHintToTheConfigsRoute(t *testing.T) {
 	t.Parallel()
 	router := newRouter(newTestClient(t, nil).Client())
 
-	response := get(router, "/other")
+	response := get(t, router, "/other")
 
 	require.Equal(t, http.StatusNotFound, response.Code)
 	var body map[string]string
@@ -181,9 +181,10 @@ func evaluatedToTheDefaultFor(user configdirector.UserContext, key string, defau
 	}
 }
 
-func get(router http.Handler, target string) *httptest.ResponseRecorder {
+func get(t *testing.T, router http.Handler, target string) *httptest.ResponseRecorder {
+	t.Helper()
 	response := httptest.NewRecorder()
-	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, target, nil))
+	router.ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, nil))
 	return response
 }
 

@@ -61,19 +61,19 @@ func TestTextOfAnAbsentValueIsEmptyAndHasNoText(t *testing.T) {
 	text, hasText := textOf(nil)
 
 	require.False(t, hasText)
-	require.Equal(t, "", text)
+	require.Empty(t, text)
 }
 
 func TestTextOfAnArrayIsEmptyAndHasNoText(t *testing.T) {
 	text, hasText := textOf([]any{"a"})
 
 	require.False(t, hasText)
-	require.Equal(t, "", text)
+	require.Empty(t, text)
 }
 
 func TestTextOfAnObjectIsEmptyAndHasNoText(t *testing.T) {
 	text, hasText := textOf(map[string]any{"a": "b"})
 
 	require.False(t, hasText)
-	require.Equal(t, "", text)
+	require.Empty(t, text)
 }

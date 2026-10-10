@@ -378,8 +378,8 @@ func (client *Client) heldSnapshot() (*configSnapshot, bool) {
 	return client.snapshot, client.snapshot != nil
 }
 
-func (client *Client) evaluationContextFor(userContext UserContext) evaluation.EvaluationContext {
-	return evaluation.EvaluationContext{
+func (client *Client) evaluationContextFor(userContext UserContext) evaluation.Context {
+	return evaluation.Context{
 		Identifier: userContext.ID,
 		Name:       userContext.Name,
 		Traits:     userContext.Traits,

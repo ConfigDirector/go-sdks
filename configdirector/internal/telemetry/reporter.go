@@ -35,8 +35,8 @@ func (report eventReport) wire(serverSDKKey string, metaContext transport.MetaCo
 		AggregatedEvents: wireAggregatedEvents{EvaluatedConfig: make([]wireAggregatedEvent, 0, len(report.evaluations))},
 		DroppedEvents:    wireDroppedEvents{EvaluatedConfig: report.droppedEvaluations, CapturedContexts: report.droppedContexts},
 	}
-	for _, context := range report.contexts {
-		wire.DiscreteEvents.CapturedContexts = append(wire.DiscreteEvents.CapturedContexts, context.wire())
+	for _, captured := range report.contexts {
+		wire.DiscreteEvents.CapturedContexts = append(wire.DiscreteEvents.CapturedContexts, captured.wire())
 	}
 	for _, aggregated := range report.evaluations {
 		wire.AggregatedEvents.EvaluatedConfig = append(wire.AggregatedEvents.EvaluatedConfig, wireAggregatedEvent{
@@ -125,26 +125,20 @@ func (reporter *httpReporter) send(report eventReport) reportOutcome {
 
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
-	request, err := reporter.options.JSONRequest(ctx, reporter.endpoint, report.wire(reporter.options.SDKKey, reporter.options.MetaContext))
-	if err != nil {
-		logger.Warn("The telemetry report could not be built; the events in it are discarded", slog.Any("cause", err))
-		return reportFailed
-	}
-	response, err := reporter.options.HTTPClient.Do(request)
+	status, err := reporter.options.PostJSON(ctx, reporter.endpoint, report.wire(reporter.options.SDKKey, reporter.options.MetaContext))
 	if err != nil {
 		logger.Warn("Sending the telemetry report failed; the events in it are discarded", slog.Any("cause", err))
 		return reportFailed
 	}
-	defer transport.DiscardResponseBody(response.Body)
 
-	outcome := outcomeOfStatus(response.StatusCode)
+	outcome := outcomeOfStatus(status)
 	switch outcome {
 	case reportSent:
 		logger.Debug("Sent a telemetry report", slog.Int("evaluations", len(report.evaluations)), slog.Int("contexts", len(report.contexts)))
 	case reportRefusedForGood:
-		logger.Error("The SDK server refused the telemetry report; no more telemetry is sent", slog.Int("status", response.StatusCode), slog.String("detail", http.StatusText(response.StatusCode)))
+		logger.Error("The SDK server refused the telemetry report; no more telemetry is sent", slog.Int("status", status), slog.String("detail", http.StatusText(status)))
 	case reportFailed:
-		logger.Warn("The SDK server answered the telemetry report with an error; the events in it are discarded", slog.Int("status", response.StatusCode))
+		logger.Warn("The SDK server answered the telemetry report with an error; the events in it are discarded", slog.Int("status", status))
 	case reportSkippedEmpty:
 	}
 	return outcome

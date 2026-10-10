@@ -40,6 +40,7 @@ var (
 // unusable URL.
 type Streaming struct {
 	*shutdown
+
 	options      Options
 	deliver      func(data string)
 	timing       timing
@@ -100,16 +101,16 @@ func (streaming *Streaming) run(ctx context.Context) {
 		case nextStepStopFatal:
 			streaming.options.Logger.Error("The stream cannot be opened and will not be retried", slog.Any("cause", end.err))
 			return
-		}
-
-		attempt = step.attempt
-		streaming.options.Logger.Log(ctx, step.logLevel, "Reconnecting to the stream",
-			slog.Int("attempt", step.attempt),
-			slog.Duration("delay", step.delay),
-			slog.Any("cause", end.err),
-		)
-		if !streaming.timing.wait(ctx, step.delay) {
-			return
+		case nextStepReconnect:
+			attempt = step.attempt
+			streaming.options.Logger.Log(ctx, step.logLevel, "Reconnecting to the stream",
+				slog.Int("attempt", step.attempt),
+				slog.Duration("delay", step.delay),
+				slog.Any("cause", end.err),
+			)
+			if !streaming.timing.wait(ctx, step.delay) {
+				return
+			}
 		}
 	}
 }
@@ -231,7 +232,7 @@ func (streaming *Streaming) streamOnceUnlessClosed(ctx context.Context, lastEven
 
 func (streaming *Streaming) openStream(ctx context.Context, sessionID string, lastEventID string) (*http.Response, error) {
 	body := streamRequestBody{ServerSDKKey: streaming.options.SDKKey, SessionID: sessionID, MetaContext: streaming.options.MetaContext}
-	request, err := streaming.options.JSONRequest(ctx, streaming.endpoints.stream, body)
+	request, err := streaming.options.jsonRequest(ctx, streaming.endpoints.stream, body)
 	if err != nil {
 		return nil, err
 	}
@@ -318,17 +319,12 @@ func (streaming *Streaming) sendHeartbeat(ctx context.Context, sessionID string)
 
 func (streaming *Streaming) postHeartbeat(ctx context.Context, sessionID string) error {
 	body := heartbeatRequestBody{ServerSDKKey: streaming.options.SDKKey, SessionID: sessionID}
-	request, err := streaming.options.JSONRequest(ctx, streaming.endpoints.heartbeat, body)
+	status, err := streaming.options.PostJSON(ctx, streaming.endpoints.heartbeat, body)
 	if err != nil {
 		return err
 	}
-	response, err := streaming.options.HTTPClient.Do(request)
-	if err != nil {
-		return err
-	}
-	DiscardResponseBody(response.Body)
-	if response.StatusCode != http.StatusNoContent {
-		return refusalError(response.StatusCode, "")
+	if status != http.StatusNoContent {
+		return refusalError(status, "")
 	}
 	return nil
 }

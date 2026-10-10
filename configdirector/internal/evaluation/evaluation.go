@@ -1,3 +1,5 @@
+// Package evaluation serves a config's value for a context by its targeting rules, following the
+// targeting rules contract every ConfigDirector SDK implements.
 package evaluation
 
 import (
@@ -6,20 +8,30 @@ import (
 	"slices"
 )
 
+// RuleKind is how a targeting rule decides whether it applies.
 type RuleKind string
 
 const (
+	// RuleKindConditional is a rule that applies when every one of its conditions holds.
 	RuleKindConditional RuleKind = "conditional"
-	RuleKindPercentage  RuleKind = "percentage"
+
+	// RuleKindPercentage is a rule that applies to the share of contexts its percentages name.
+	RuleKindPercentage RuleKind = "percentage"
 )
 
+// RuleTarget is what a conditional rule serves once it applies.
 type RuleTarget string
 
 const (
-	RuleTargetValue      RuleTarget = "value"
+	// RuleTargetValue serves the rule's own value.
+	RuleTargetValue RuleTarget = "value"
+
+	// RuleTargetPercentage serves the value of the percentage bucket the context falls in.
 	RuleTargetPercentage RuleTarget = "percentage"
 )
 
+// Percentage is one bucket of a percentage rollout: the share of contexts it covers and the
+// value it serves them.
 type Percentage struct {
 	ID         string
 	Percentage float64
@@ -27,6 +39,7 @@ type Percentage struct {
 	ValueID    string
 }
 
+// Rule is one targeting rule of a config, as the SDK server sends it.
 type Rule struct {
 	ID          string
 	Order       *int
@@ -38,24 +51,33 @@ type Rule struct {
 	Percentages []Percentage
 }
 
+// TargetingRules are a config's rules and the default targeting rule value served when none
+// applies.
 type TargetingRules struct {
 	DefaultValue   string
 	DefaultValueID string
 	Rules          []Rule
 }
 
+// Config is a config as the evaluator sees it: its id, which seeds percentage rollouts, and its
+// targeting rules.
 type Config struct {
 	ID             string
 	TargetingRules TargetingRules
 }
 
+// ServedValue is the value the targeting rules served, as text, and whether a rule served it
+// rather than the default targeting rule value.
 type ServedValue struct {
 	Text        string
 	ValueID     string
 	RuleMatched bool
 }
 
-func Evaluate(config Config, context EvaluationContext, segments Segments) ServedValue {
+// Evaluate serves config's value for context: the value of the first rule in evaluation order
+// that applies, or the default targeting rule value. A segment condition is looked up in
+// segments.
+func Evaluate(config Config, context Context, segments Segments) ServedValue {
 	for _, rule := range inEvaluationOrder(config.TargetingRules.Rules) {
 		if served, applies := rule.serve(config.ID, context, segments); applies {
 			return served
@@ -88,7 +110,7 @@ func (rule Rule) orderOrLast() int {
 	return *rule.Order
 }
 
-func (rule Rule) serve(configID string, context EvaluationContext, segments Segments) (ServedValue, bool) {
+func (rule Rule) serve(configID string, context Context, segments Segments) (ServedValue, bool) {
 	switch rule.Kind {
 	case RuleKindPercentage:
 		return rule.serveFromBucket(configID, context)
@@ -109,7 +131,7 @@ func (rule Rule) serve(configID string, context EvaluationContext, segments Segm
 	}
 }
 
-func (rule Rule) conditionsHold(context EvaluationContext, segments Segments) bool {
+func (rule Rule) conditionsHold(context Context, segments Segments) bool {
 	for _, condition := range rule.Conditions {
 		if !condition.holdsFor(context, segments) {
 			return false
@@ -118,7 +140,7 @@ func (rule Rule) conditionsHold(context EvaluationContext, segments Segments) bo
 	return true
 }
 
-func (rule Rule) serveFromBucket(configID string, context EvaluationContext) (ServedValue, bool) {
+func (rule Rule) serveFromBucket(configID string, context Context) (ServedValue, bool) {
 	bucket, found := bucketFor(rule.Percentages, assignedPercentage(configID, context.Identifier))
 	if !found {
 		return ServedValue{}, false

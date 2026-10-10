@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -27,7 +28,7 @@ func newLogger() (*slog.Logger, func() []slog.Record) {
 	}
 }
 
-func (handler *recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (*recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
 
 func (handler *recordingHandler) Handle(_ context.Context, record slog.Record) error {
 	handler.mutex.Lock()
@@ -38,7 +39,7 @@ func (handler *recordingHandler) Handle(_ context.Context, record slog.Record) e
 }
 
 func (handler *recordingHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	inherited := append(append([]slog.Attr{}, handler.attrs...), attrs...)
+	inherited := slices.Concat(handler.attrs, attrs)
 	return &recordingHandler{records: handler.records, mutex: handler.mutex, attrs: inherited}
 }
 

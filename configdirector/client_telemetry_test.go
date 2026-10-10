@@ -67,10 +67,6 @@ func byID(valueID string) telemetryValue {
 	return telemetryValue{ValueID: &valueID}
 }
 
-func pointerTo(value string) *string {
-	return &value
-}
-
 const firstScheduledFlushTimeout = 8 * time.Second
 
 func (server *sdkServer) nextTelemetryReport(t *testing.T) telemetryReport {
@@ -129,13 +125,13 @@ func TestTwoIdenticalReadsArriveAsOneEventWithACountOfTwo(t *testing.T) {
 	requireRFC3339Millis(t, aggregated.StartTime)
 	requireRFC3339Millis(t, aggregated.EndTime)
 	require.Equal(t, evaluatedConfigEvent{
-		ContextID:        pointerTo("user-123"),
+		ContextID:        new("user-123"),
 		Key:              "new-checkout",
-		Type:             pointerTo("boolean"),
+		Type:             new("boolean"),
 		DefaultValue:     inline("false"),
 		RequestedType:    "bool",
 		EvaluatedValue:   inline("true"),
-		EvaluatedValueID: pointerTo("value-new-checkout-default"),
+		EvaluatedValueID: new("value-new-checkout-default"),
 		UsedDefault:      false,
 		EvaluationReason: "found-match",
 	}, aggregated.Event)
@@ -166,7 +162,7 @@ func TestAReadThatUsedTheDefaultCarriesUsedDefaultAndTheReason(t *testing.T) {
 	event := onlyEventOf(t, reportAfterClosing(t, client, server)).Event
 	require.True(t, event.UsedDefault)
 	require.Equal(t, "invalid-number", event.EvaluationReason)
-	require.Equal(t, pointerTo("integer"), event.Type)
+	require.Equal(t, new("integer"), event.Type)
 	require.Equal(t, inline("10"), event.DefaultValue)
 	require.Equal(t, inline("10"), event.EvaluatedValue)
 	require.Nil(t, event.EvaluatedValueID)
@@ -242,7 +238,7 @@ func TestAJSONReadIntoAStructReportsTheStructNameAsTheRequestedType(t *testing.T
 
 	event := onlyEventOf(t, reportAfterClosing(t, client, server)).Event
 	require.Equal(t, "limits", event.RequestedType)
-	require.Equal(t, pointerTo("json"), event.Type)
+	require.Equal(t, new("json"), event.Type)
 }
 
 func TestAJSONReadCarriesTheServerValueIDAndTheDigestOfItsDefault(t *testing.T) {
@@ -254,7 +250,7 @@ func TestAJSONReadCarriesTheServerValueIDAndTheDigestOfItsDefault(t *testing.T) 
 
 	event := onlyEventOf(t, reportAfterClosing(t, client, server)).Event
 	require.Equal(t, byID("value-limits-default"), event.EvaluatedValue)
-	require.Equal(t, pointerTo("value-limits-default"), event.EvaluatedValueID)
+	require.Equal(t, new("value-limits-default"), event.EvaluatedValueID)
 	require.Equal(t, byID("5zh2NOzZcJmKjjBJ5XJBzx"), event.DefaultValue)
 }
 
@@ -359,9 +355,9 @@ func TestAnIdentifiedContextIsCapturedOnceAcrossItsReads(t *testing.T) {
 	client.StringValue("welcome-message", "fallback", identifiedUser)
 
 	report := reportAfterClosing(t, client, server)
-	require.Equal(t, []capturedContext{{ID: "user-123", Name: pointerTo("Ada"), Traits: map[string]any{"plan": "pro"}}}, report.DiscreteEvents.CapturedContexts)
-	require.Equal(t, pointerTo("user-123"), eventsOf(report)[0].Event.ContextID)
-	require.Equal(t, pointerTo("user-123"), eventsOf(report)[1].Event.ContextID)
+	require.Equal(t, []capturedContext{{ID: "user-123", Name: new("Ada"), Traits: map[string]any{"plan": "pro"}}}, report.DiscreteEvents.CapturedContexts)
+	require.Equal(t, new("user-123"), eventsOf(report)[0].Event.ContextID)
+	require.Equal(t, new("user-123"), eventsOf(report)[1].Event.ContextID)
 }
 
 func TestACapturedContextKeepsTheTraitsItWasReadWithWhenTheCallerChangesTheMap(t *testing.T) {
@@ -558,7 +554,7 @@ func TestAWatchThatFiresIsRecorded(t *testing.T) {
 	event := onlyEventOf(t, reportAfterClosing(t, client, server)).Event
 	require.Equal(t, "greeting", event.Key)
 	require.Equal(t, inline("Bonjour"), event.EvaluatedValue)
-	require.Equal(t, pointerTo("user-123"), event.ContextID)
+	require.Equal(t, new("user-123"), event.ContextID)
 }
 
 func TestTheReportIdentifiesTheSDKKeyTheSDKAndTheApplication(t *testing.T) {

@@ -77,7 +77,7 @@ func newLogger() (*slog.Logger, func() []slog.Record) {
 	}
 }
 
-func (handler *recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (*recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
 
 func (handler *recordingHandler) Handle(_ context.Context, record slog.Record) error {
 	handler.mutex.Lock()

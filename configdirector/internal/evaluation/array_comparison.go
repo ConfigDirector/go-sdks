@@ -3,8 +3,8 @@ package evaluation
 import "slices"
 
 func arrayMatches(value any, operator string, targets []string) bool {
-	elements, _ := value.([]any)
-	containsAnyTarget := slices.ContainsFunc(elements, func(element any) bool {
+	elements, isArray := value.([]any)
+	containsAnyTarget := isArray && slices.ContainsFunc(elements, func(element any) bool {
 		text, hasText := textOf(element)
 		return hasText && slices.Contains(targets, text)
 	})

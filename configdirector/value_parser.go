@@ -28,6 +28,8 @@ func stringFrom(state ConfigState) (string, EvaluationReason) {
 	switch state.Type {
 	case ConfigTypeBoolean, ConfigTypeInteger, ConfigTypeFloat:
 		return "", EvaluationReasonTypeMismatch
+	case ConfigTypeCustom, ConfigTypeString, ConfigTypeEnum, ConfigTypeURL, ConfigTypeJSON:
+		return state.Value, EvaluationReasonFoundMatch
 	default:
 		return state.Value, EvaluationReasonFoundMatch
 	}

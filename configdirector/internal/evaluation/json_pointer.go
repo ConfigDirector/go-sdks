@@ -11,7 +11,7 @@ func traitAtPointer(traits map[string]any, pointer string) any {
 	}
 
 	var current any = traits
-	for _, rawToken := range strings.Split(pointer[1:], "/") {
+	for rawToken := range strings.SplitSeq(pointer[1:], "/") {
 		token, valid := decodePointerToken(rawToken)
 		if !valid {
 			return nil

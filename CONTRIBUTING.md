@@ -38,9 +38,11 @@ make check-all     # everything CI runs
 ```
 
 `make lint` runs `gofmt`, `go vet` and `golangci-lint`, installing the version the Makefile pins
-under `.tools/` the first time. `make format` formats every module and sample. `make test-race` runs the tests
-with the race detector, as CI does, and `make verify-tidy` fails when a module's or a sample's
-`go.mod` or `go.sum` differs from what `go mod tidy` would write.
+under `.tools/` the first time. [.golangci.yml](.golangci.yml) enables a strict set of linters on
+top of the standard preset; a finding is fixed, not silenced. `make format` formats every module
+and sample. `make test-race` runs the tests with the race detector, as CI does, and
+`make verify-tidy` fails when a module's or a sample's `go.mod` or `go.sum` differs from what
+`go mod tidy` would write.
 
 The checks live in the [Makefile](Makefile). CI and the pre-push hook only call `make` targets,
 so add new checks there rather than in either of them.

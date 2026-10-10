@@ -1,3 +1,5 @@
+// A Gin app that evaluates a handful of ConfigDirector configs for the user a request names and
+// answers GET /configs with their values.
 package main
 
 import (
@@ -75,7 +77,7 @@ func serve(ctx context.Context, handler http.Handler, logger *slog.Logger) error
 	}
 
 	logger.Info("Shutting down")
-	shutdownContext, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	shutdownContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 	defer cancel()
 	return server.Shutdown(shutdownContext)
 }

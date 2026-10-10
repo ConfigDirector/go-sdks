@@ -2,7 +2,9 @@ package evaluation
 
 import "strings"
 
-type EvaluationContext struct {
+// Context is what targeting rules match on: the user a config is evaluated for and the
+// application asking.
+type Context struct {
 	Identifier string
 	Name       string
 	Traits     map[string]any
@@ -10,10 +12,14 @@ type EvaluationContext struct {
 	AppVersion string
 }
 
+// Condition is one condition of a conditional rule. The two kinds are AttributeCondition and
+// SegmentCondition.
 type Condition interface {
-	holdsFor(context EvaluationContext, segments Segments) bool
+	holdsFor(context Context, segments Segments) bool
 }
 
+// AttributeCondition compares one attribute of the context, or one of its traits, with the
+// condition's target values.
 type AttributeCondition struct {
 	ID           string
 	Attribute    string
@@ -23,19 +29,22 @@ type AttributeCondition struct {
 	TargetValues []string
 }
 
+// SegmentCondition holds when the context is in, or not in, a segment.
 type SegmentCondition struct {
 	ID        string
 	Operator  string
 	SegmentID string
 }
 
+// Segment is a set of contexts: those for which every condition of at least one group holds.
 type Segment struct {
 	Groups [][]AttributeCondition
 }
 
+// Segments are the segments a payload carries, by id.
 type Segments map[string]Segment
 
-func (condition AttributeCondition) holdsFor(context EvaluationContext, _ Segments) bool {
+func (condition AttributeCondition) holdsFor(context Context, _ Segments) bool {
 	value, known := condition.attributeValue(context)
 	if !known {
 		return false
@@ -59,7 +68,7 @@ func (condition AttributeCondition) holdsFor(context EvaluationContext, _ Segmen
 	}
 }
 
-func (condition AttributeCondition) attributeValue(context EvaluationContext) (any, bool) {
+func (condition AttributeCondition) attributeValue(context Context) (any, bool) {
 	switch condition.Attribute {
 	case "identifier":
 		return context.Identifier, true
@@ -79,7 +88,7 @@ func (condition AttributeCondition) attributeValue(context EvaluationContext) (a
 	}
 }
 
-func (condition SegmentCondition) holdsFor(context EvaluationContext, segments Segments) bool {
+func (condition SegmentCondition) holdsFor(context Context, segments Segments) bool {
 	segment, found := segments[condition.SegmentID]
 	if !found {
 		return false
@@ -95,7 +104,7 @@ func (condition SegmentCondition) holdsFor(context EvaluationContext, segments S
 	}
 }
 
-func (segment Segment) contains(context EvaluationContext) bool {
+func (segment Segment) contains(context Context) bool {
 	for _, group := range segment.Groups {
 		if everyConditionHolds(group, context) {
 			return true
@@ -104,7 +113,7 @@ func (segment Segment) contains(context EvaluationContext) bool {
 	return false
 }
 
-func everyConditionHolds(group []AttributeCondition, context EvaluationContext) bool {
+func everyConditionHolds(group []AttributeCondition, context Context) bool {
 	for _, condition := range group {
 		if !condition.holdsFor(context, nil) {
 			return false

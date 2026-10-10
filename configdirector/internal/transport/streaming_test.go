@@ -166,7 +166,7 @@ type logRecorder struct {
 	records []slog.Record
 }
 
-func (recorder *logRecorder) Enabled(context.Context, slog.Level) bool { return true }
+func (*logRecorder) Enabled(context.Context, slog.Level) bool { return true }
 
 func (recorder *logRecorder) Handle(_ context.Context, record slog.Record) error {
 	recorder.mutex.Lock()
@@ -381,7 +381,7 @@ func transportGoroutines() int {
 		written := runtime.Stack(buffer, true)
 		if written < len(buffer) {
 			count := 0
-			for _, goroutine := range strings.Split(string(buffer[:written]), "\n\n") {
+			for goroutine := range strings.SplitSeq(string(buffer[:written]), "\n\n") {
 				if strings.Contains(goroutine, "internal/transport.(*Streaming)") || strings.Contains(goroutine, "internal/transport.(*Polling)") || strings.Contains(goroutine, "internal/eventsource.(*Reader)") {
 					count++
 				}

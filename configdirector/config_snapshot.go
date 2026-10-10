@@ -46,7 +46,7 @@ func (snapshot *configSnapshot) mergedWith(payload serverPayload) *configSnapsho
 	return merged
 }
 
-func (snapshot *configSnapshot) stateOf(key string, context evaluation.EvaluationContext) (ConfigState, bool) {
+func (snapshot *configSnapshot) stateOf(key string, context evaluation.Context) (ConfigState, bool) {
 	definition, found := snapshot.configs[key]
 	if !found {
 		return ConfigState{}, false
@@ -54,7 +54,7 @@ func (snapshot *configSnapshot) stateOf(key string, context evaluation.Evaluatio
 	return definition.evaluatedFor(context, snapshot.segments), true
 }
 
-func (snapshot *configSnapshot) statesOf(keys []string, context evaluation.EvaluationContext) []ConfigState {
+func (snapshot *configSnapshot) statesOf(keys []string, context evaluation.Context) []ConfigState {
 	states := make([]ConfigState, 0, len(keys))
 	for _, key := range keys {
 		if state, found := snapshot.stateOf(key, context); found {
@@ -86,7 +86,7 @@ func (snapshot *configSnapshot) changesFrom(previous *configSnapshot, payload se
 	return updated
 }
 
-func (definition configDefinition) evaluatedFor(context evaluation.EvaluationContext, segments evaluation.Segments) ConfigState {
+func (definition configDefinition) evaluatedFor(context evaluation.Context, segments evaluation.Segments) ConfigState {
 	config := evaluation.Config{ID: definition.id, TargetingRules: definition.targetingRules}
 	served := evaluation.Evaluate(config, context, segments)
 	return ConfigState{

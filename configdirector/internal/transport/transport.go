@@ -48,9 +48,22 @@ func (metaContext MetaContext) userAgent() string {
 	return metaContext.SDKName + "/" + metaContext.SDKVersion
 }
 
-// JSONRequest builds a POST of body as JSON to endpoint, identifying the SDK in the User-Agent
-// header.
-func (options Options) JSONRequest(ctx context.Context, endpoint string, body any) (*http.Request, error) {
+// PostJSON sends body as JSON to endpoint, reads the answer to its end and closes it so the
+// connection can be reused, and returns the answer's status.
+func (options Options) PostJSON(ctx context.Context, endpoint string, body any) (int, error) {
+	request, err := options.jsonRequest(ctx, endpoint, body)
+	if err != nil {
+		return 0, err
+	}
+	response, err := options.HTTPClient.Do(request)
+	if err != nil {
+		return 0, err
+	}
+	discardResponseBody(response)
+	return response.StatusCode, nil
+}
+
+func (options Options) jsonRequest(ctx context.Context, endpoint string, body any) (*http.Request, error) {
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -103,11 +116,9 @@ func responseDetail(body io.Reader) string {
 	return strings.TrimSpace(string(detail))
 }
 
-// DiscardResponseBody reads a response body to its end, within the body cap, and closes it, so the
-// connection can be reused.
-func DiscardResponseBody(body io.ReadCloser) {
-	_, _ = io.Copy(io.Discard, io.LimitReader(body, maxResponseBodyBytes))
-	_ = body.Close()
+func discardResponseBody(response *http.Response) {
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maxResponseBodyBytes))
+	_ = response.Body.Close()
 }
 
 func retryAfterDelay(header string, now time.Time) (time.Duration, bool) {

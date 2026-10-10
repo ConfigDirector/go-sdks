@@ -18,23 +18,26 @@ func (client *Client) WatchBool(key string, defaultValue bool, userContext UserC
 	return watchValue(client, key, defaultValue, userContext, boolFrom, handler)
 }
 
-// WatchString is WatchBool for the text value of key, as StringValue reads it. It fires, runs its handler and is cancelled exactly as WatchBool does: on the
-// connection's goroutine, with a panic recovered and logged at error level, until the returned
-// func, UnwatchAll or Close is called.
+// WatchString is WatchBool for the text value of key, as StringValue reads it. It fires, runs
+// its handler and is cancelled exactly as WatchBool does: on the connection's goroutine, with a
+// panic recovered and logged at error level, until the returned func, UnwatchAll or Close is
+// called.
 func (client *Client) WatchString(key string, defaultValue string, userContext UserContext, handler func(string)) (unsubscribe func()) {
 	return watchValue(client, key, defaultValue, userContext, stringFrom, handler)
 }
 
-// WatchInt is WatchBool for the whole number value of key, as IntValue reads it. It fires, runs its handler and is cancelled exactly as WatchBool does: on the
-// connection's goroutine, with a panic recovered and logged at error level, until the returned
-// func, UnwatchAll or Close is called.
+// WatchInt is WatchBool for the whole number value of key, as IntValue reads it. It fires, runs
+// its handler and is cancelled exactly as WatchBool does: on the connection's goroutine, with a
+// panic recovered and logged at error level, until the returned func, UnwatchAll or Close is
+// called.
 func (client *Client) WatchInt(key string, defaultValue int64, userContext UserContext, handler func(int64)) (unsubscribe func()) {
 	return watchValue(client, key, defaultValue, userContext, int64From, handler)
 }
 
-// WatchFloat is WatchBool for the number value of key, as FloatValue reads it. It fires, runs its handler and is cancelled exactly as WatchBool does: on the
-// connection's goroutine, with a panic recovered and logged at error level, until the returned
-// func, UnwatchAll or Close is called.
+// WatchFloat is WatchBool for the number value of key, as FloatValue reads it. It fires, runs
+// its handler and is cancelled exactly as WatchBool does: on the connection's goroutine, with a
+// panic recovered and logged at error level, until the returned func, UnwatchAll or Close is
+// called.
 func (client *Client) WatchFloat(key string, defaultValue float64, userContext UserContext, handler func(float64)) (unsubscribe func()) {
 	return watchValue(client, key, defaultValue, userContext, float64From, handler)
 }

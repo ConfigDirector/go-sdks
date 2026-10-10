@@ -3,6 +3,7 @@
 package telemetry
 
 import (
+	"log/slog"
 	"maps"
 	"sync"
 	"sync/atomic"
@@ -100,7 +101,7 @@ func (collector *Collector) Close() {
 	select {
 	case <-collector.done:
 	case <-timer.C:
-		collector.reporter.options.Logger.Warn("Closing the client did not wait for the last telemetry report; it finishes in the background", "closeTimeout", closeTimeout)
+		collector.reporter.options.Logger.Warn("Closing the client did not wait for the last telemetry report; it finishes in the background", slog.Duration("closeTimeout", closeTimeout))
 	}
 }
 

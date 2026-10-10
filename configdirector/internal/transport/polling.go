@@ -31,6 +31,7 @@ var (
 // an unusable URL.
 type Polling struct {
 	*shutdown
+
 	options     Options
 	interval    time.Duration
 	deliver     func(data string)
@@ -184,7 +185,7 @@ func (polling *Polling) pollOnceUnlessClosed(ctx context.Context, lastUpdateTime
 	if err != nil {
 		return pollEndAfterRequestError(requestCtx, err, lastUpdateTimestamp)
 	}
-	defer DiscardResponseBody(response.Body)
+	defer discardResponseBody(response)
 
 	switch {
 	case response.StatusCode == http.StatusNoContent:
@@ -222,7 +223,7 @@ func (polling *Polling) post(ctx context.Context, lastUpdateTimestamp string) (*
 		MetaContext:         polling.options.MetaContext,
 		LastUpdateTimestamp: lastUpdateTimestamp,
 	}
-	request, err := polling.options.JSONRequest(ctx, polling.endpoint, body)
+	request, err := polling.options.jsonRequest(ctx, polling.endpoint, body)
 	if err != nil {
 		return nil, err
 	}
