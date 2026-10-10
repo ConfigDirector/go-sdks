@@ -17,11 +17,7 @@ const (
 	streamPath    = "server/sse/v1"
 	heartbeatPath = "server/heartbeat/v1"
 
-	heartbeatInterval       = 90 * time.Second
 	heartbeatRequestTimeout = 10 * time.Second
-	stallTimeout            = 45 * time.Second
-	connectTimeout          = 30 * time.Second
-	closeTimeout            = 5 * time.Second
 
 	maxBackoffExponent = 9
 	quietAttempts      = 5
@@ -29,7 +25,6 @@ const (
 
 var (
 	errConnectTimedOut = errors.New("transport: no response arrived within the connect timeout")
-	errCloseTimedOut   = errors.New("transport: the streaming transport did not shut down within the close timeout")
 	errStreamEnded     = errors.New("transport: the server closed the stream")
 )
 
@@ -44,50 +39,17 @@ var (
 // stops for good, logging it once at error level, on a 4xx status other than 429 and on an
 // unusable URL.
 type Streaming struct {
+	*shutdown
 	options      Options
 	deliver      func(data string)
 	timing       timing
 	endpoints    streamEndpoints
 	endpointsErr error
-
-	cancel    context.CancelFunc
-	done      chan struct{}
-	closeOnce sync.Once
-	closeErr  error
 }
 
 type streamEndpoints struct {
 	stream    string
 	heartbeat string
-}
-
-type timing struct {
-	heartbeatInterval time.Duration
-	stallTimeout      time.Duration
-	connectTimeout    time.Duration
-	closeTimeout      time.Duration
-	wait              func(ctx context.Context, delay time.Duration) bool
-}
-
-func protocolTiming() timing {
-	return timing{
-		heartbeatInterval: heartbeatInterval,
-		stallTimeout:      stallTimeout,
-		connectTimeout:    connectTimeout,
-		closeTimeout:      closeTimeout,
-		wait:              waitFor,
-	}
-}
-
-func waitFor(ctx context.Context, delay time.Duration) bool {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-		return true
-	case <-ctx.Done():
-		return false
-	}
 }
 
 // OpenStreaming starts connecting at once and returns. deliver is called on the transport's
@@ -98,13 +60,12 @@ func OpenStreaming(options Options, deliver func(data string)) *Streaming {
 }
 
 func openStreaming(options Options, deliver func(data string), timing timing) *Streaming {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, shutdown := newShutdown(timing.closeTimeout)
 	streaming := &Streaming{
-		options: options,
-		deliver: deliver,
-		timing:  timing,
-		cancel:  cancel,
-		done:    make(chan struct{}),
+		shutdown: shutdown,
+		options:  options,
+		deliver:  deliver,
+		timing:   timing,
 	}
 	streaming.endpoints, streaming.endpointsErr = streamEndpointsOf(options.BaseURL)
 	go streaming.run(ctx)
@@ -123,25 +84,8 @@ func streamEndpointsOf(baseURL string) (streamEndpoints, error) {
 	return streamEndpoints{stream: stream, heartbeat: heartbeat}, nil
 }
 
-// Close ends the stream, the heartbeats and any pending reconnect, and returns once every
-// goroutine of the transport has ended, or with an error when that takes longer than the close
-// timeout. Calling it again returns the first call's result.
-func (streaming *Streaming) Close() error {
-	streaming.closeOnce.Do(func() {
-		streaming.cancel()
-		timer := time.NewTimer(streaming.timing.closeTimeout)
-		defer timer.Stop()
-		select {
-		case <-streaming.done:
-		case <-timer.C:
-			streaming.closeErr = errCloseTimedOut
-		}
-	})
-	return streaming.closeErr
-}
-
 func (streaming *Streaming) run(ctx context.Context) {
-	defer close(streaming.done)
+	defer streaming.goroutineEnded()
 
 	attempt := 0
 	lastEventID := ""

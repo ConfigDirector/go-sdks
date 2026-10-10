@@ -32,10 +32,11 @@ type recordedRequest struct {
 }
 
 type recordedBody struct {
-	ServerSDKKey string            `json:"serverSdkKey"`
-	SessionID    string            `json:"sessionId"`
-	MetaContext  map[string]string `json:"metaContext"`
-	fieldNames   []string
+	ServerSDKKey        string            `json:"serverSdkKey"`
+	SessionID           string            `json:"sessionId"`
+	MetaContext         map[string]string `json:"metaContext"`
+	LastUpdateTimestamp string            `json:"lastUpdateTimestamp"`
+	fieldNames          []string
 }
 
 func recordRequest(request *http.Request) recordedRequest {
@@ -54,7 +55,7 @@ func recordRequest(request *http.Request) recordedRequest {
 
 type sdkServer struct {
 	*httptest.Server
-	streamRequests  chan recordedRequest
+	requests        chan recordedRequest
 	heartbeats      chan recordedRequest
 	requestCount    atomic.Int64
 	heartbeatStatus atomic.Int64
@@ -63,17 +64,19 @@ type sdkServer struct {
 func startSDKServer(t *testing.T, scripts ...http.HandlerFunc) *sdkServer {
 	t.Helper()
 	server := &sdkServer{
-		streamRequests: make(chan recordedRequest, 1024),
-		heartbeats:     make(chan recordedRequest, 1024),
+		requests:   make(chan recordedRequest, 1024),
+		heartbeats: make(chan recordedRequest, 1024),
 	}
 	server.heartbeatStatus.Store(http.StatusNoContent)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /server/sse/v1", func(writer http.ResponseWriter, request *http.Request) {
-		server.streamRequests <- recordRequest(request)
+	scripted := func(writer http.ResponseWriter, request *http.Request) {
+		server.requests <- recordRequest(request)
 		nth := int(server.requestCount.Add(1)) - 1
 		scripts[min(nth, len(scripts)-1)](writer, request)
-	})
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /server/sse/v1", scripted)
+	mux.HandleFunc("POST /server/polling/v1", scripted)
 	mux.HandleFunc("POST /server/heartbeat/v1", func(writer http.ResponseWriter, request *http.Request) {
 		server.heartbeats <- recordRequest(request)
 		writer.WriteHeader(int(server.heartbeatStatus.Load()))
@@ -87,6 +90,43 @@ func refuse(status int) http.HandlerFunc {
 	return func(writer http.ResponseWriter, _ *http.Request) {
 		writer.WriteHeader(status)
 		_, _ = io.WriteString(writer, "refused")
+	}
+}
+
+func answer(status int, body string) http.HandlerFunc {
+	return func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(status)
+		_, _ = io.WriteString(writer, body)
+	}
+}
+
+func dropConnection() http.HandlerFunc {
+	return func(writer http.ResponseWriter, _ *http.Request) {
+		connection, _, err := http.NewResponseController(writer).Hijack()
+		if err == nil {
+			_ = connection.Close()
+		}
+	}
+}
+
+func dropConnectionMidBody(partialBody string) http.HandlerFunc {
+	return func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Length", "1048576")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(writer, partialBody)
+		controller := http.NewResponseController(writer)
+		_ = controller.Flush()
+		connection, _, err := controller.Hijack()
+		if err == nil {
+			_ = connection.Close()
+		}
+	}
+}
+
+func neverAnswer() http.HandlerFunc {
+	return func(_ http.ResponseWriter, request *http.Request) {
+		<-request.Context().Done()
 	}
 }
 
@@ -166,59 +206,83 @@ func (recorder *logRecorder) levelsByAttempt() map[int64]slog.Level {
 	return levels
 }
 
+// openedTransport is what every test observes of a transport: the data it delivered, every log
+// record it wrote, and the delay of each wait it decided, which the test reads to let the wait
+// end.
+type openedTransport struct {
+	delivered chan string
+	logs      *logRecorder
+	waits     chan time.Duration
+}
+
+func newOpenedTransport() openedTransport {
+	return openedTransport{
+		delivered: make(chan string, 1024),
+		logs:      &logRecorder{},
+		waits:     make(chan time.Duration),
+	}
+}
+
 type openedStreaming struct {
 	*Streaming
-	delivered       chan string
-	logs            *logRecorder
-	reconnectDelays chan time.Duration
+	openedTransport
 }
 
 func (opened *openedStreaming) letReconnect(t *testing.T) time.Duration {
 	t.Helper()
-	return await(t, opened.reconnectDelays)
+	return await(t, opened.waits)
 }
 
-type streamingSetup struct {
-	options Options
-	timing  timing
-	deliver func(data string)
+type transportSetup struct {
+	options         Options
+	timing          timing
+	pollingInterval time.Duration
+	deliver         func(data string)
 }
 
-type streamingAdjustment func(*streamingSetup)
+type transportAdjustment func(*transportSetup)
 
-func withHeartbeatInterval(interval time.Duration) streamingAdjustment {
-	return func(setup *streamingSetup) { setup.timing.heartbeatInterval = interval }
+func withHeartbeatInterval(interval time.Duration) transportAdjustment {
+	return func(setup *transportSetup) { setup.timing.heartbeatInterval = interval }
 }
 
-func withStallTimeout(timeout time.Duration) streamingAdjustment {
-	return func(setup *streamingSetup) { setup.timing.stallTimeout = timeout }
+func withStallTimeout(timeout time.Duration) transportAdjustment {
+	return func(setup *transportSetup) { setup.timing.stallTimeout = timeout }
 }
 
-func withConnectTimeout(timeout time.Duration) streamingAdjustment {
-	return func(setup *streamingSetup) { setup.timing.connectTimeout = timeout }
+func withConnectTimeout(timeout time.Duration) transportAdjustment {
+	return func(setup *transportSetup) { setup.timing.connectTimeout = timeout }
 }
 
-func withCloseTimeout(timeout time.Duration) streamingAdjustment {
-	return func(setup *streamingSetup) { setup.timing.closeTimeout = timeout }
+func withRequestTimeout(timeout time.Duration) transportAdjustment {
+	return func(setup *transportSetup) { setup.timing.requestTimeout = timeout }
 }
 
-func withRealDelays() streamingAdjustment {
-	return func(setup *streamingSetup) { setup.timing.wait = waitFor }
+func withCloseTimeout(timeout time.Duration) transportAdjustment {
+	return func(setup *transportSetup) { setup.timing.closeTimeout = timeout }
 }
 
-func withBaseURL(baseURL string) streamingAdjustment {
-	return func(setup *streamingSetup) { setup.options.BaseURL = baseURL }
+func withPollingInterval(interval time.Duration) transportAdjustment {
+	return func(setup *transportSetup) { setup.pollingInterval = interval }
 }
 
-func withApp(name string, version string) streamingAdjustment {
-	return func(setup *streamingSetup) {
+func withRealDelays() transportAdjustment {
+	return func(setup *transportSetup) { setup.timing.wait = waitFor }
+}
+
+func withBaseURL(baseURL string) transportAdjustment {
+	return func(setup *transportSetup) { setup.options.BaseURL = baseURL }
+}
+
+func withApp(name string, version string) transportAdjustment {
+	return func(setup *transportSetup) {
 		setup.options.MetaContext.AppName = name
 		setup.options.MetaContext.AppVersion = version
 	}
 }
 
-func withDeliveryBlockedUntil(release <-chan struct{}) streamingAdjustment {
-	return func(setup *streamingSetup) {
+func withDeliveryBlockedUntil(release <-chan struct{}) transportAdjustment {
+	return func(setup *transportSetup) {
 		deliver := setup.deliver
 		setup.deliver = func(data string) {
 			<-release
@@ -227,17 +291,12 @@ func withDeliveryBlockedUntil(release <-chan struct{}) streamingAdjustment {
 	}
 }
 
-func openStreamingAgainst(t *testing.T, server *sdkServer, adjustments ...streamingAdjustment) *openedStreaming {
+func transportSetupAgainst(t *testing.T, server *sdkServer, opened openedTransport, adjustments []transportAdjustment) transportSetup {
 	t.Helper()
-	opened := &openedStreaming{
-		delivered:       make(chan string, 1024),
-		logs:            &logRecorder{},
-		reconnectDelays: make(chan time.Duration),
-	}
 	httpClient := &http.Client{}
 	t.Cleanup(httpClient.CloseIdleConnections)
 
-	setup := streamingSetup{
+	setup := transportSetup{
 		options: Options{
 			SDKKey:      testSDKKey,
 			BaseURL:     server.URL,
@@ -245,12 +304,13 @@ func openStreamingAgainst(t *testing.T, server *sdkServer, adjustments ...stream
 			HTTPClient:  httpClient,
 			Logger:      slog.New(opened.logs),
 		},
-		timing:  protocolTiming(),
-		deliver: func(data string) { opened.delivered <- data },
+		timing:          protocolTiming(),
+		pollingInterval: time.Minute,
+		deliver:         func(data string) { opened.delivered <- data },
 	}
 	setup.timing.wait = func(ctx context.Context, delay time.Duration) bool {
 		select {
-		case opened.reconnectDelays <- delay:
+		case opened.waits <- delay:
 			return true
 		case <-ctx.Done():
 			return false
@@ -259,6 +319,13 @@ func openStreamingAgainst(t *testing.T, server *sdkServer, adjustments ...stream
 	for _, adjust := range adjustments {
 		adjust(&setup)
 	}
+	return setup
+}
+
+func openStreamingAgainst(t *testing.T, server *sdkServer, adjustments ...transportAdjustment) *openedStreaming {
+	t.Helper()
+	opened := &openedStreaming{openedTransport: newOpenedTransport()}
+	setup := transportSetupAgainst(t, server, opened.openedTransport, adjustments)
 
 	opened.Streaming = openStreaming(setup.options, setup.deliver, setup.timing)
 	t.Cleanup(func() { _ = opened.Close() })
@@ -315,7 +382,7 @@ func transportGoroutines() int {
 		if written < len(buffer) {
 			count := 0
 			for _, goroutine := range strings.Split(string(buffer[:written]), "\n\n") {
-				if strings.Contains(goroutine, "internal/transport.(*Streaming)") || strings.Contains(goroutine, "internal/eventsource.(*Reader)") {
+				if strings.Contains(goroutine, "internal/transport.(*Streaming)") || strings.Contains(goroutine, "internal/transport.(*Polling)") || strings.Contains(goroutine, "internal/eventsource.(*Reader)") {
 					count++
 				}
 			}
@@ -330,7 +397,7 @@ func TestOpenStreamingPostsTheSDKKeySessionAndMetaContext(t *testing.T) {
 
 	openStreamingAgainst(t, server, withApp("checkout", "7.1.0"))
 
-	request := await(t, server.streamRequests)
+	request := await(t, server.requests)
 	require.Equal(t, http.MethodPost, request.method)
 	require.Equal(t, "application/json", request.header.Get("Content-Type"))
 	require.Equal(t, "text/event-stream", request.header.Get("Accept"))
@@ -352,7 +419,7 @@ func TestOpenStreamingOmitsAnUnsetAppNameAndVersion(t *testing.T) {
 
 	openStreamingAgainst(t, server)
 
-	request := await(t, server.streamRequests)
+	request := await(t, server.requests)
 	require.Equal(t, map[string]string{"sdkName": "go-server-sdk", "sdkVersion": "1.2.3"}, request.body.MetaContext)
 }
 
@@ -372,8 +439,8 @@ func TestADroppedStreamIsReconnectedWithTheLastEventID(t *testing.T) {
 	require.Equal(t, "first", await(t, opened.delivered))
 	opened.letReconnect(t)
 
-	first := await(t, server.streamRequests)
-	second := await(t, server.streamRequests)
+	first := await(t, server.requests)
+	second := await(t, server.requests)
 	require.Empty(t, first.header.Get("Last-Event-ID"))
 	require.Equal(t, "41", second.header.Get("Last-Event-ID"))
 	require.Equal(t, "second", await(t, opened.delivered))
@@ -385,8 +452,8 @@ func TestEveryConnectionCarriesANewSessionID(t *testing.T) {
 	opened := openStreamingAgainst(t, server)
 	opened.letReconnect(t)
 
-	first := await(t, server.streamRequests)
-	second := await(t, server.streamRequests)
+	first := await(t, server.requests)
+	second := await(t, server.requests)
 	require.Regexp(t, uuidVersion4, second.body.SessionID)
 	require.NotEqual(t, first.body.SessionID, second.body.SessionID)
 }
@@ -467,9 +534,7 @@ func TestBackoffDelaysAreJitteredRatherThanAFixedShareOfTheCeiling(t *testing.T)
 }
 
 func TestAServerThatNeverAnswersIsReconnectedAfterTheConnectTimeout(t *testing.T) {
-	server := startSDKServer(t, func(_ http.ResponseWriter, request *http.Request) {
-		<-request.Context().Done()
-	}, streamHeldOpen("data: answered\n\n"))
+	server := startSDKServer(t, neverAnswer(), streamHeldOpen("data: answered\n\n"))
 
 	opened := openStreamingAgainst(t, server, withConnectTimeout(100*time.Millisecond))
 	requireBetween(t, opened.letReconnect(t), seconds(1), seconds(2))
@@ -557,8 +622,8 @@ func TestA401StopsRetryingWithOneErrorLog(t *testing.T) {
 
 	opened := openStreamingAgainst(t, server)
 
-	await(t, server.streamRequests)
-	expectNothing(t, opened.reconnectDelays, 200*time.Millisecond)
+	await(t, server.requests)
+	expectNothing(t, opened.waits, 200*time.Millisecond)
 	require.Equal(t, int64(1), server.requestCount.Load())
 	require.Equal(t, 1, opened.logs.recordsAt(slog.LevelError))
 }
@@ -568,8 +633,8 @@ func TestA404StopsRetryingWithOneErrorLog(t *testing.T) {
 
 	opened := openStreamingAgainst(t, server)
 
-	await(t, server.streamRequests)
-	expectNothing(t, opened.reconnectDelays, 200*time.Millisecond)
+	await(t, server.requests)
+	expectNothing(t, opened.waits, 200*time.Millisecond)
 	require.Equal(t, int64(1), server.requestCount.Load())
 	require.Equal(t, 1, opened.logs.recordsAt(slog.LevelError))
 }
@@ -637,7 +702,7 @@ func TestAnUnsupportedSchemeStopsWithOneErrorLogAndNoRequest(t *testing.T) {
 	opened := openStreamingAgainst(t, server, withBaseURL("ftp://example.invalid"))
 
 	require.Eventually(t, func() bool { return opened.logs.recordsAt(slog.LevelError) == 1 }, awaitTimeout, 10*time.Millisecond)
-	expectNothing(t, server.streamRequests, 100*time.Millisecond)
+	expectNothing(t, server.requests, 100*time.Millisecond)
 	require.NoError(t, opened.Close())
 }
 
@@ -647,7 +712,7 @@ func TestAnUnparsableURLStopsWithOneErrorLogAndNoRequest(t *testing.T) {
 	opened := openStreamingAgainst(t, server, withBaseURL("http://[::1]:namedport"))
 
 	require.Eventually(t, func() bool { return opened.logs.recordsAt(slog.LevelError) == 1 }, awaitTimeout, 10*time.Millisecond)
-	expectNothing(t, server.streamRequests, 100*time.Millisecond)
+	expectNothing(t, server.requests, 100*time.Millisecond)
 }
 
 func TestAProxyBaseURLKeepsItsPath(t *testing.T) {
@@ -659,7 +724,7 @@ func TestAProxyBaseURLKeepsItsPath(t *testing.T) {
 
 	openStreamingAgainst(t, proxied, withBaseURL(proxy.URL+"/proxy/sdk"))
 
-	await(t, proxied.streamRequests)
+	await(t, proxied.requests)
 }
 
 func TestHeartbeatsCarryTheSessionIDOfTheOpenStream(t *testing.T) {
@@ -667,7 +732,7 @@ func TestHeartbeatsCarryTheSessionIDOfTheOpenStream(t *testing.T) {
 
 	openStreamingAgainst(t, server, withHeartbeatInterval(30*time.Millisecond))
 
-	streamRequest := await(t, server.streamRequests)
+	streamRequest := await(t, server.requests)
 	heartbeat := await(t, server.heartbeats)
 	require.Equal(t, http.MethodPost, heartbeat.method)
 	require.Equal(t, "application/json", heartbeat.header.Get("Content-Type"))
@@ -694,8 +759,8 @@ func TestHeartbeatsSwitchToTheNewSessionAfterAReconnect(t *testing.T) {
 
 	opened := openStreamingAgainst(t, server, withHeartbeatInterval(30*time.Millisecond))
 	opened.letReconnect(t)
-	await(t, server.streamRequests)
-	second := await(t, server.streamRequests)
+	await(t, server.requests)
+	second := await(t, server.requests)
 
 	require.Eventually(t, func() bool {
 		select {
@@ -759,7 +824,7 @@ func TestCloseLeavesNoGoroutineBehind(t *testing.T) {
 func TestCloseWhileWaitingToReconnectReturnsAtOnce(t *testing.T) {
 	server := startSDKServer(t, refuse(http.StatusServiceUnavailable))
 	opened := openStreamingAgainst(t, server, withRealDelays())
-	await(t, server.streamRequests)
+	await(t, server.requests)
 	closingAt := time.Now()
 
 	err := opened.Close()
@@ -785,7 +850,7 @@ func TestCloseReportsATimeoutWhenADeliveryHandlerDoesNotReturn(t *testing.T) {
 	server := startSDKServer(t, streamHeldOpen("data: first\n\n"))
 	release := make(chan struct{})
 	opened := openStreamingAgainst(t, server, withCloseTimeout(100*time.Millisecond), withDeliveryBlockedUntil(release))
-	await(t, server.streamRequests)
+	await(t, server.requests)
 	time.Sleep(50 * time.Millisecond)
 
 	err := opened.Close()
@@ -818,7 +883,7 @@ func TestAnEventBufferedBeforeCloseIsNotDeliveredAfterIt(t *testing.T) {
 	server := startSDKServer(t, streamHeldOpen("data: first\n\ndata: second\n\n"))
 	release := make(chan struct{})
 	opened := openStreamingAgainst(t, server, withDeliveryBlockedUntil(release))
-	await(t, server.streamRequests)
+	await(t, server.requests)
 	time.Sleep(50 * time.Millisecond)
 	closed := make(chan error, 1)
 	go func() { closed <- opened.Close() }()
@@ -837,6 +902,7 @@ func TestTheProtocolTimingIsNinetySecondHeartbeatsAndAFortyFiveSecondStall(t *te
 	require.Equal(t, 90*time.Second, timing.heartbeatInterval)
 	require.Equal(t, 45*time.Second, timing.stallTimeout)
 	require.Equal(t, 30*time.Second, timing.connectTimeout)
+	require.Equal(t, 30*time.Second, timing.requestTimeout)
 	require.Equal(t, 5*time.Second, timing.closeTimeout)
 }
 

@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -115,4 +117,81 @@ func retryAfterDelay(header string, now time.Time) (time.Duration, bool) {
 		return 0, false
 	}
 	return max(at.Sub(now), 0), true
+}
+
+const (
+	heartbeatInterval = 90 * time.Second
+	stallTimeout      = 45 * time.Second
+	connectTimeout    = 30 * time.Second
+	requestTimeout    = 30 * time.Second
+	closeTimeout      = 5 * time.Second
+)
+
+var errCloseTimedOut = errors.New("transport: the transport did not shut down within the close timeout")
+
+type timing struct {
+	heartbeatInterval time.Duration
+	stallTimeout      time.Duration
+	connectTimeout    time.Duration
+	requestTimeout    time.Duration
+	closeTimeout      time.Duration
+	wait              func(ctx context.Context, delay time.Duration) bool
+}
+
+func protocolTiming() timing {
+	return timing{
+		heartbeatInterval: heartbeatInterval,
+		stallTimeout:      stallTimeout,
+		connectTimeout:    connectTimeout,
+		requestTimeout:    requestTimeout,
+		closeTimeout:      closeTimeout,
+		wait:              waitFor,
+	}
+}
+
+func waitFor(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// shutdown ends a transport's goroutine on Close and waits for it. The goroutine runs under the
+// context newShutdown returns and calls goroutineEnded when it returns.
+type shutdown struct {
+	cancel       context.CancelFunc
+	done         chan struct{}
+	closeTimeout time.Duration
+	closeOnce    sync.Once
+	closeErr     error
+}
+
+func newShutdown(closeTimeout time.Duration) (context.Context, *shutdown) {
+	ctx, cancel := context.WithCancel(context.Background())
+	return ctx, &shutdown{cancel: cancel, done: make(chan struct{}), closeTimeout: closeTimeout}
+}
+
+func (shutdown *shutdown) goroutineEnded() {
+	close(shutdown.done)
+}
+
+// Close ends the transport's goroutine, with the request, stream or wait it is in, and returns
+// once the goroutine has ended, or with an error when that takes longer than the close timeout.
+// Calling it again returns the first call's result.
+func (shutdown *shutdown) Close() error {
+	shutdown.closeOnce.Do(func() {
+		shutdown.cancel()
+		timer := time.NewTimer(shutdown.closeTimeout)
+		defer timer.Stop()
+		select {
+		case <-shutdown.done:
+		case <-timer.C:
+			shutdown.closeErr = errCloseTimedOut
+		}
+	})
+	return shutdown.closeErr
 }
