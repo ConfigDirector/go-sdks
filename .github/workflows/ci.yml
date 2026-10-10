@@ -20,6 +20,9 @@ env:
   # check-latest makes every job run the newest patch of that version: the runner image's cached
   # Go lags a patch release by days, and govulncheck reports the standard library of the Go that
   # runs it, so the hardening job would otherwise fail on vulnerabilities a released patch fixed.
+  # The jobs name the Go line rather than reading go.work: its directive carries a patch number
+  # (go 1.26.0, which the OpenFeature SDK requires), and setup-go takes that as the exact
+  # release, pinning the job to the unpatched .0.
   GOTOOLCHAIN: local
 
 jobs:
@@ -33,7 +36,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           check-latest: true
-          go-version-file: go.work
+          go-version: "1.26"
           cache-dependency-path: "**/go.sum"
 
       - run: make verify-tidy
@@ -72,7 +75,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           check-latest: true
-          go-version-file: go.work
+          go-version: "1.26"
           cache-dependency-path: "**/go.sum"
 
       # govulncheck also scans the standard library of the Go that runs it, so this job fails
@@ -91,7 +94,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           check-latest: true
-          go-version-file: go.work
+          go-version: "1.26"
           cache-dependency-path: "**/go.sum"
 
       # Each sample is a module outside go.work. The first run checks them against the released
