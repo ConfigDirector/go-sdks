@@ -15,10 +15,13 @@ SAMPLES := samples/configdirector/gin
 SAMPLES_WORKSPACE := $(CURDIR)/.tools/samples/go.work
 
 # Each binary's path carries its version, so bumping the version reinstalls it on the next run.
+# govulncheck is built from source by the local Go and reads the standard library's sources with
+# that Go's parser, so a binary built by an older Go fails on a newer one's sources; its path
+# carries the Go version too, and a Go upgrade reinstalls it.
 GOLANGCI_LINT_VERSION := v2.14.0
 GOLANGCI_LINT := .tools/golangci-lint/$(GOLANGCI_LINT_VERSION)/golangci-lint$(if $(filter Windows_NT,$(OS)),.exe)
 GOVULNCHECK_VERSION := v1.8.0
-GOVULNCHECK := .tools/govulncheck/$(GOVULNCHECK_VERSION)/govulncheck$(if $(filter Windows_NT,$(OS)),.exe)
+GOVULNCHECK := .tools/govulncheck/$(GOVULNCHECK_VERSION)-$(shell go env GOVERSION)/govulncheck$(if $(filter Windows_NT,$(OS)),.exe)
 
 # The fuzz targets, each as <package directory>:<target>. `go test -fuzz` takes one target in one
 # package per run, and CI gives each one this budget.

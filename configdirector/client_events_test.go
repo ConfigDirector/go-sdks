@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ConfigDirector/go-sdks/configdirector"
 	"github.com/stretchr/testify/require"
@@ -265,15 +266,12 @@ func TestWatchJSONLogsAnErrorAndSkipsTheHandlerWhenTheTargetIsNotAPointer(t *tes
 	waitForReady(t, client)
 	values := newRecorder[any]()
 	client.WatchJSON("limits", func() any { return limits{} }, noUser, values.record)
-	updates := newRecorder[configdirector.ConfigsUpdated]()
-	client.OnConfigsUpdated(updates.record)
 
 	server.send(fullPayload(jsonConfig("limits", `{"max":20,"min":1}`)).json())
 
-	updates.next(t)
-	require.Empty(t, values.received())
-	require.Len(t, recordsAt(slog.LevelError, records()), 1)
+	require.Eventually(t, func() bool { return len(recordsAt(slog.LevelError, records())) == 1 }, awaitTimeout, 10*time.Millisecond)
 	require.Equal(t, "limits", attributesOf(recordsAt(slog.LevelError, records())[0])["key"])
+	require.Empty(t, values.received())
 }
 
 func TestAWatchEvaluatesForItsOwnUserContext(t *testing.T) {

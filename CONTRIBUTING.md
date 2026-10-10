@@ -49,8 +49,10 @@ does, and `make verify-tidy` fails when a module's or a sample's `go.mod` or `go
 from what `go mod tidy` would write.
 
 `make vulncheck` runs `govulncheck` over each module, installing the pinned version under
-`.tools/` the first time. It also scans the standard library of the Go that runs it, so it fails
-on a Go that is behind its latest patch release; upgrade Go rather than silence it. `make fuzz`
+`.tools/` the first time and again after a Go upgrade, since the binary is built by the local Go
+and reads the standard library's sources with it. It also scans the standard library of the Go
+that runs it, so it fails on a Go that is behind its latest patch release; upgrade Go rather than
+silence it. `make fuzz`
 runs every fuzz target listed in the Makefile for 20 seconds each: the parsers that take input
 from the network, which are the event-stream parser, the server SDK payload decoder, the value
 parser and the JSON pointer lookup into a context's traits. A failing input is written under the
