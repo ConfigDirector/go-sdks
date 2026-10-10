@@ -9,6 +9,12 @@ different web frameworks, grouped by the module they demonstrate.
 |---|---|---|
 | [gin/](configdirector/gin/) | [Gin](https://gin-gonic.com) | Minimal HTTP app: one client per process, per-request evaluation, clean shutdown |
 
+## [configdirector-openfeature](configdirector-openfeature/)
+
+| Sample | Framework | Description |
+|---|---|---|
+| [gin/](configdirector-openfeature/gin/) | [Gin](https://gin-gonic.com) | The same app reading through an OpenFeature client: one provider per process, evaluation details on `/configs/<key>` |
+
 Each sample is an independent module outside the root `go.work`, depending on a released SDK
 exactly as a real app would. `make samples-local` also checks every sample against the modules in
 this working tree.
