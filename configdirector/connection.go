@@ -5,16 +5,29 @@ import (
 	"io"
 
 	"github.com/ConfigDirector/go-sdks/configdirector/internal/connectionseam"
+	"github.com/ConfigDirector/go-sdks/configdirector/internal/identityseam"
 	"github.com/ConfigDirector/go-sdks/configdirector/internal/telemetry"
 	"github.com/ConfigDirector/go-sdks/configdirector/internal/transport"
 )
 
-const sdkName = "go-server-sdk"
+var ownIdentity = identityseam.Identity{SDKName: "go-server-sdk", SDKVersion: Version}
 
 type connection = io.Closer
 
 func init() {
 	connectionseam.NewClientOverConnection = newClientOverConnection
+	identityseam.NewClientIdentifiedAs = newClientIdentifiedAs
+}
+
+func newClientIdentifiedAs(identity identityseam.Identity, options Options) (*Client, error) {
+	settings, err := settingsFrom(options)
+	if err != nil {
+		return nil, err
+	}
+	settings.identity = identity
+	return newClient(settings, options.Hooks, func(deliver func(document string)) connection {
+		return openTransport(settings, deliver)
+	}, startTelemetry(settings)), nil
 }
 
 func newClientOverConnection(options Options, open connectionseam.OpenConnection) (*Client, error) {
@@ -32,8 +45,8 @@ func (settings clientSettings) transportOptions() transport.Options {
 		SDKKey:  settings.sdkKey,
 		BaseURL: settings.baseURL,
 		MetaContext: transport.MetaContext{
-			SDKName:    sdkName,
-			SDKVersion: Version,
+			SDKName:    settings.identity.SDKName,
+			SDKVersion: settings.identity.SDKVersion,
 			AppName:    settings.metadata.AppName,
 			AppVersion: settings.metadata.AppVersion,
 		},

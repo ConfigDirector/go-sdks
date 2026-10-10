@@ -55,13 +55,7 @@ type Client struct {
 // first config state arrives every read returns its in-code default value; call WaitForReady to
 // wait for it, or attach an OnReady handler through Options.Hooks.
 func NewClient(options Options) (*Client, error) {
-	settings, err := settingsFrom(options)
-	if err != nil {
-		return nil, err
-	}
-	return newClient(settings, options.Hooks, func(deliver func(document string)) connection {
-		return openTransport(settings, deliver)
-	}, startTelemetry(settings)), nil
+	return newClientIdentifiedAs(ownIdentity, options)
 }
 
 func newClient(settings clientSettings, hooks Hooks, open func(deliver func(document string)) connection, collector telemetryCollector) *Client {

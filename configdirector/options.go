@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/ConfigDirector/go-sdks/configdirector/internal/identityseam"
 )
 
 // Options configures a Client. Every field except SDKKey is optional: a zero value stands for
@@ -107,6 +109,7 @@ const (
 )
 
 type clientSettings struct {
+	identity        identityseam.Identity
 	sdkKey          string
 	metadata        Metadata
 	mode            ConnectionMode
@@ -159,6 +162,7 @@ func settingsFrom(options Options) (clientSettings, error) {
 	}
 
 	return clientSettings{
+		identity:        ownIdentity,
 		sdkKey:          options.SDKKey,
 		metadata:        options.Metadata,
 		mode:            mode,

@@ -9,6 +9,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- `wrapper`, a package for the modules ConfigDirector ships on top of this SDK.
+  `wrapper.NewClient(module, version, options)` creates a client that reports the module's name
+  and version to ConfigDirector in the SDK's place, from a closed list of modules;
+  `wrapper.OpenFeatureProvider` is the OpenFeature provider. Applications keep creating their
+  client with `NewClient`.
+
 ### Fixed
 
 - A trait of any Go type now matches targeting rules the way the same value sent as JSON does: an

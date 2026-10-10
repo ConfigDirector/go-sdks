@@ -16,9 +16,11 @@ The root [go.work](go.work) lists both, so the provider always develops against 
 working tree. The root is not a module itself, so `./...` from the root matches nothing; the
 Makefile names each module's packages instead, as in
 `go build ./configdirector/... ./configdirector-openfeature/...`. Each module has its own version,
-changelog, and release. Once the provider imports the SDK, its `go.mod` must require a released
-version of the SDK from the module proxy, never this working tree, because `go mod tidy` ignores
-`go.work`.
+changelog, and release. The provider's `go.mod` requires a released version of the SDK from the
+module proxy, because `go mod tidy` ignores `go.work`; while the provider depends on an SDK change
+that is not released yet, a `replace` directive points it at the working tree, and raising the
+requirement to the release that carries the change removes it (see
+[Releasing the provider after an SDK change](#releasing-the-provider-after-an-sdk-change)).
 
 [samples/](samples/) holds sample applications, one module per framework under
 `samples/<module>/<framework>`. They are modules outside the workspace and depend on the SDK the
@@ -68,10 +70,14 @@ so add new checks there rather than in either of them.
 
 The SDK reports an SDK name and version in the `User-Agent` header and in telemetry. A module
 built on the SDK, such as the provider, must report its own name and `Version` without the SDK
-accepting an arbitrary identity from its caller: the SDK keeps a closed list of the wrapper
-modules allowed to, and reads each one's version itself. This list does not exist yet; increment
-15 in [PLAN.md](PLAN.md) adds it. Adding a wrapper module means adding it to that list, releasing
-the SDK, and registering the new name in the ConfigDirector capability tables.
+accepting an arbitrary identity from its caller: [`configdirector/wrapper`](configdirector/wrapper/)
+keeps a closed list of the wrapper modules allowed to, as the variables of its `Module` type, and
+`wrapper.NewClient(module, version, options)` builds a client reporting that module's name and the
+version the module passes, its own `Version` constant, since the SDK cannot read another module's
+constant. Go's `internal` rule goes by import path, and the provider's module path is not under
+`configdirector/`, so the package is exported and its documentation says it is not for
+applications. Adding a wrapper module means adding a variable to that list, releasing the SDK, and
+registering the new name in the ConfigDirector capability tables.
 
 ## Releasing
 
@@ -118,5 +124,8 @@ anything that can be added instead of changed is.
 ### Releasing the provider after an SDK change
 
 The provider's `go.mod` names the oldest SDK version it works with. When the provider starts using
-something new in the SDK, raise that requirement and release the SDK first: the provider's tag
-only resolves for consumers once the SDK version it requires is on the module proxy.
+something new in the SDK, add a `replace` directive pointing at `../configdirector` so the checks
+run against the working tree, and release the SDK first. Then remove the `replace`, raise the
+requirement to that release, run `go mod tidy` in the provider's directory, merge, and release the
+provider: its tag only resolves for consumers once the SDK version it requires is on the module
+proxy.
