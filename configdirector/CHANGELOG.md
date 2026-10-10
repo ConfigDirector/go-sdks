@@ -9,6 +9,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- A trait of any Go type now matches targeting rules the way the same value sent as JSON does: an
+  `int`, `float32` or `json.Number` trait satisfies number conditions and text conditions on its
+  decimal text, a `[]string` trait satisfies `contains any of`, a JSON pointer reaches into a typed
+  map or a struct by its JSON field names, and a `time.Time` trait satisfies datetime conditions.
+  Before, only `string`, `bool`, `float64`, `[]any` and `map[string]any` traits were read, so
+  `Traits: map[string]any{"score": 92}` matched no rule while the dashboard showed `score: 92`.
+  A trait `encoding/json` cannot encode, such as a channel, matches no condition, and the other
+  traits in the context still match.
+
 ## [0.1.0] - 2026-10-10
 
 ### Added

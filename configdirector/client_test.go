@@ -31,6 +31,13 @@ func newReadyClient(t testing.TB) *configdirector.Client {
 	return client
 }
 
+func newReadyClientServing(t testing.TB, configs ...map[string]any) *configdirector.Client {
+	t.Helper()
+	client := newClientAgainst(t, startSDKServer(t, fullPayload(configs...).json()))
+	waitForReady(t, client)
+	return client
+}
+
 func waitForReady(t testing.TB, client *configdirector.Client) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

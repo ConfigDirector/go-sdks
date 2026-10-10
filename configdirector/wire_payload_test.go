@@ -106,6 +106,10 @@ func boolConfigTrueInSegment(key string, segmentID string) map[string]any {
 	return configOf(key, "boolean", "false", valueRule(key+"-in-segment", 0, "true", inSegment(segmentID)))
 }
 
+func boolConfigTrueWhen(key string, condition map[string]any) map[string]any {
+	return configOf(key, "boolean", "false", valueRule(key+"-matches", 0, "true", condition))
+}
+
 func valueRule(id string, order int, value string, conditions ...map[string]any) map[string]any {
 	return map[string]any{
 		"id":          id,
@@ -120,25 +124,29 @@ func valueRule(id string, order int, value string, conditions ...map[string]any)
 }
 
 func identifierEquals(identifier string) map[string]any {
-	return attributeCondition("identifier", nil, identifier)
+	return attributeCondition("identifier", nil, "=", "text", identifier)
 }
 
 func appNameEquals(appName string) map[string]any {
-	return attributeCondition("appName", nil, appName)
+	return attributeCondition("appName", nil, "=", "text", appName)
 }
 
 func traitEquals(pointer string, value string) map[string]any {
-	return attributeCondition("traits", pointer, value)
+	return traitCondition(pointer, "=", "text", value)
 }
 
-func attributeCondition(attribute string, trait any, target string) map[string]any {
+func traitCondition(pointer string, operator string, targetType string, target string) map[string]any {
+	return attributeCondition("traits", pointer, operator, targetType, target)
+}
+
+func attributeCondition(attribute string, trait any, operator string, targetType string, target string) map[string]any {
 	return map[string]any{
 		"id":           "condition-" + attribute,
 		"kind":         "attribute",
 		"attribute":    attribute,
 		"trait":        trait,
-		"operator":     "=",
-		"targetType":   "text",
+		"operator":     operator,
+		"targetType":   targetType,
 		"targetValues": []string{target},
 	}
 }

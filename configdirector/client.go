@@ -384,7 +384,7 @@ func (client *Client) evaluationContextFor(userContext UserContext) evaluation.C
 	return evaluation.Context{
 		Identifier: userContext.ID,
 		Name:       userContext.Name,
-		Traits:     userContext.Traits,
+		Traits:     evaluation.TraitsInJSONDataModel(userContext.Traits),
 		AppName:    client.settings.metadata.AppName,
 		AppVersion: client.settings.metadata.AppVersion,
 	}

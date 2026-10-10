@@ -15,6 +15,9 @@ type UserContext struct {
 
 	// Traits are arbitrary attributes of the user. They are shown in the ConfigDirector dashboard
 	// and usable in targeting rules, which address a trait with a JSON pointer such as /plan.
+	// Each trait is evaluated as the value encoding/json encodes it to: an int is a number, a
+	// []string is an array of text, a struct is an object keyed by its JSON field names, and a
+	// time.Time is its RFC 3339 text. A trait encoding/json cannot encode matches no condition.
 	Traits map[string]any
 
 	// Anonymous marks a context that is evaluated but never stored or shown in the dashboard.
