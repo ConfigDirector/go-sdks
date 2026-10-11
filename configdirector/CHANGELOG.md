@@ -9,6 +9,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- golangci-lint's `contextcheck` no longer reports a config read in code that has a request or a
+  `context.Context` at hand, such as a `net/http` handler, as a call that should pass that
+  context. Reads still take no context.
+
 ## [0.2.0] - 2026-10-10
 
 ### Added

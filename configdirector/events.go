@@ -1,7 +1,6 @@
 package configdirector
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"reflect"
@@ -187,12 +186,11 @@ func (client *Client) reportEvaluation(evaluated Evaluation) {
 func (client *Client) callHandler(event eventName, handler func(), attributes ...slog.Attr) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			client.settings.logger.LogAttrs(
-				context.Background(),
-				slog.LevelError,
-				"A handler panicked; the panic was recovered and the client continues",
-				append([]slog.Attr{slog.String("event", string(event)), slog.Any("panic", recovered)}, attributes...)...,
-			)
+			arguments := []any{slog.String("event", string(event)), slog.Any("panic", recovered)}
+			for _, attribute := range attributes {
+				arguments = append(arguments, attribute)
+			}
+			client.settings.logger.Error("A handler panicked; the panic was recovered and the client continues", arguments...)
 		}
 	}()
 	handler()
