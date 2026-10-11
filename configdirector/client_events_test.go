@@ -423,7 +423,7 @@ func TestAPanickingReadyHandlerDoesNotStopTheClientBecomingReady(t *testing.T) {
 	server.send(fullPayload(textConfig("a", "1")).json())
 
 	waitForReady(t, client)
-	require.Len(t, recordsAt(slog.LevelError, records()), 1)
+	require.Eventually(t, func() bool { return len(recordsAt(slog.LevelError, records())) == 1 }, awaitTimeout, 10*time.Millisecond)
 	require.Equal(t, "ready", attributesOf(recordsAt(slog.LevelError, records())[0])["event"])
 }
 
