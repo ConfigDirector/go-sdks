@@ -1,5 +1,5 @@
-github.com/ConfigDirector/go-sdks/configdirector v0.2.0 h1:IgC6/sd7S3PZdVo6MT8eoDtHANEFuesMBKpWwXhxT98=
-github.com/ConfigDirector/go-sdks/configdirector v0.2.0/go.mod h1:x94DDgPIZULC6jXEYjupuQyjAR3H6uq9eVfs8HNvnAw=
+github.com/ConfigDirector/go-sdks/configdirector v0.2.1 h1:qGSL1HcV4YMo8K3uDgnpuQI9MQqMS4Cn1N3G4QEoRXc=
+github.com/ConfigDirector/go-sdks/configdirector v0.2.1/go.mod h1:x94DDgPIZULC6jXEYjupuQyjAR3H6uq9eVfs8HNvnAw=
 github.com/open-feature/go-sdk v1.19.0 h1:vahRSX/kYzLny7bUuxssNiiHOGqHlDIG47z+jJ/DCEY=
 github.com/open-feature/go-sdk v1.19.0/go.mod h1:JlS8ClrWUzfywMOOeFo0Ro3BeT8cS5O/KbZUOOjwtyQ=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=

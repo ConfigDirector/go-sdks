@@ -3,7 +3,7 @@ module github.com/ConfigDirector/go-sdks/samples/configdirector/gin
 go 1.26.0
 
 require (
-	github.com/ConfigDirector/go-sdks/configdirector v0.1.0
+	github.com/ConfigDirector/go-sdks/configdirector v0.2.1
 	github.com/gin-gonic/gin v1.12.0
 	github.com/joho/godotenv v1.5.1
 	github.com/stretchr/testify v1.12.1
