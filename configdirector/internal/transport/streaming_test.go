@@ -230,12 +230,13 @@ func (recorder *logRecorder) levelsByAttempt() map[int64]slog.Level {
 }
 
 // openedTransport is what every test observes of a transport: the data it delivered, every log
-// record it wrote, and the delay of each wait it decided, which the test reads to let the wait
-// end.
+// record it wrote, and the delay of each wait it decided. The transport stays in each wait until
+// the test ends it or the transport closes.
 type openedTransport struct {
 	delivered chan string
 	logs      *logRecorder
 	waits     chan time.Duration
+	waitEnds  chan struct{}
 }
 
 func newOpenedTransport() openedTransport {
@@ -243,6 +244,7 @@ func newOpenedTransport() openedTransport {
 		delivered: make(chan string, 1024),
 		logs:      &logRecorder{},
 		waits:     make(chan time.Duration),
+		waitEnds:  make(chan struct{}),
 	}
 }
 
@@ -253,7 +255,9 @@ type openedStreaming struct {
 
 func (opened *openedStreaming) letReconnect(t *testing.T) time.Duration {
 	t.Helper()
-	return await(t, opened.waits)
+	delay := await(t, opened.waits)
+	opened.waitEnds <- struct{}{}
+	return delay
 }
 
 type transportSetup struct {
@@ -334,6 +338,12 @@ func transportSetupAgainst(t *testing.T, server *sdkServer, opened openedTranspo
 	setup.timing.wait = func(ctx context.Context, delay time.Duration) bool {
 		select {
 		case opened.waits <- delay:
+		case <-ctx.Done():
+			return false
+		}
+
+		select {
+		case <-opened.waitEnds:
 			return true
 		case <-ctx.Done():
 			return false

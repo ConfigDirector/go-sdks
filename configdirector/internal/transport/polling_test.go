@@ -25,6 +25,15 @@ type openedPolling struct {
 
 func (opened *openedPolling) letPoll(t *testing.T) time.Duration {
 	t.Helper()
+	delay := opened.holdTheNextPoll(t)
+	opened.waitEnds <- struct{}{}
+	return delay
+}
+
+// holdTheNextPoll returns the delay the transport decided to wait before its next poll and keeps
+// it waiting until it closes, so what the test reads afterwards happened before that wait.
+func (opened *openedPolling) holdTheNextPoll(t *testing.T) time.Duration {
+	t.Helper()
 	return await(t, opened.waits)
 }
 
@@ -183,7 +192,7 @@ func TestAnUnreachableServerIsLoggedOnceAndPolledAgainOnTheInterval(t *testing.T
 
 	opened := openPollingAgainst(t, server)
 
-	require.Equal(t, time.Minute, opened.letPoll(t))
+	require.Equal(t, time.Minute, opened.holdTheNextPoll(t))
 	require.Equal(t, 1, opened.logs.recordsAt(slog.LevelError))
 }
 
@@ -198,7 +207,7 @@ func TestAServerThatClosesEveryConnectionSeesTwoRequestsPerIntervalAndOneErrorLo
 	await(t, server.requests)
 	await(t, server.requests)
 	expectNothing(t, server.requests, 100*time.Millisecond)
-	require.Equal(t, time.Minute, opened.letPoll(t))
+	require.Equal(t, time.Minute, opened.holdTheNextPoll(t))
 	require.Equal(t, 2, opened.logs.recordsAt(slog.LevelError))
 }
 
@@ -211,7 +220,7 @@ func TestA503ProducesOneRequestAndOneErrorLogPerInterval(t *testing.T) {
 
 	await(t, server.requests)
 	expectNothing(t, server.requests, 100*time.Millisecond)
-	require.Equal(t, time.Minute, opened.letPoll(t))
+	require.Equal(t, time.Minute, opened.holdTheNextPoll(t))
 	require.Equal(t, 2, opened.logs.recordsAt(slog.LevelError))
 }
 
@@ -219,7 +228,7 @@ func TestA503OnTheRetryIsNotRetriedAgain(t *testing.T) {
 	server := startSDKServer(t, dropConnection(), refuse(http.StatusServiceUnavailable))
 
 	opened := openPollingAgainst(t, server)
-	require.Equal(t, time.Minute, opened.letPoll(t))
+	require.Equal(t, time.Minute, opened.holdTheNextPoll(t))
 
 	require.Equal(t, int64(2), server.requestCount.Load())
 	require.Equal(t, 1, opened.logs.recordsAt(slog.LevelError))
@@ -229,7 +238,7 @@ func TestARequestThatRunsPastItsDeadlineIsNotRetried(t *testing.T) {
 	server := startSDKServer(t, neverAnswer())
 
 	opened := openPollingAgainst(t, server, withRequestTimeout(100*time.Millisecond))
-	require.Equal(t, time.Minute, opened.letPoll(t))
+	require.Equal(t, time.Minute, opened.holdTheNextPoll(t))
 
 	require.Equal(t, int64(1), server.requestCount.Load())
 	require.Equal(t, 1, opened.logs.recordsAt(slog.LevelError))
@@ -244,7 +253,7 @@ func TestABodyThatNeverEndsIsNotRetried(t *testing.T) {
 	})
 
 	opened := openPollingAgainst(t, server, withRequestTimeout(100*time.Millisecond))
-	require.Equal(t, time.Minute, opened.letPoll(t))
+	require.Equal(t, time.Minute, opened.holdTheNextPoll(t))
 
 	require.Equal(t, int64(1), server.requestCount.Load())
 	require.Equal(t, 1, opened.logs.recordsAt(slog.LevelError))
@@ -254,7 +263,7 @@ func TestAnUnparsableBodyIsNotRetried(t *testing.T) {
 	server := startSDKServer(t, answer(http.StatusOK, "not json"))
 
 	opened := openPollingAgainst(t, server)
-	require.Equal(t, time.Minute, opened.letPoll(t))
+	require.Equal(t, time.Minute, opened.holdTheNextPoll(t))
 
 	require.Equal(t, int64(1), server.requestCount.Load())
 	require.Equal(t, 1, opened.logs.recordsAt(slog.LevelError))
@@ -310,7 +319,7 @@ func TestA429WithARetryAfterShorterThanTheIntervalWaitsTheInterval(t *testing.T)
 
 	opened := openPollingAgainst(t, server)
 
-	require.Equal(t, time.Minute, opened.letPoll(t))
+	require.Equal(t, time.Minute, opened.holdTheNextPoll(t))
 }
 
 func TestA429WithoutRetryAfterWaitsTheInterval(t *testing.T) {
@@ -318,7 +327,7 @@ func TestA429WithoutRetryAfterWaitsTheInterval(t *testing.T) {
 
 	opened := openPollingAgainst(t, server)
 
-	require.Equal(t, time.Minute, opened.letPoll(t))
+	require.Equal(t, time.Minute, opened.holdTheNextPoll(t))
 	require.Equal(t, 1, opened.logs.recordsAt(slog.LevelError))
 }
 
@@ -504,7 +513,7 @@ func TestABodyLongerThanThirtyTwoMiBIsNotRetried(t *testing.T) {
 	server := startSDKServer(t, answer(http.StatusOK, `{"timestamp":"`+strings.Repeat("x", maxResponseBodyBytes)+`"}`))
 
 	opened := openPollingAgainst(t, server)
-	require.Equal(t, time.Minute, opened.letPoll(t))
+	require.Equal(t, time.Minute, opened.holdTheNextPoll(t))
 
 	require.Equal(t, int64(1), server.requestCount.Load())
 	require.Equal(t, 1, opened.logs.recordsAt(slog.LevelError))
