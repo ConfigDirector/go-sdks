@@ -13,7 +13,7 @@ Each module has its own changelog, version, and release. Pick the server SDK to 
 
 ## Sample apps
 
-Small, runnable applications live under [`samples/`](samples/), grouped by the module they demonstrate. Start with the [Gin sample](samples/configdirector/gin/) for the server SDK, or its [OpenFeature counterpart](samples/configdirector-openfeature/gin/) for the provider.
+Small, runnable applications live under [`samples/`](samples/), grouped by the module they demonstrate. Start with the [Gin sample](samples/configdirector/gin/) or the framework-free [net/http sample](samples/configdirector/net-http/) for the server SDK, or the Gin sample's [OpenFeature counterpart](samples/configdirector-openfeature/gin/) for the provider.
 
 ## Getting Help
 

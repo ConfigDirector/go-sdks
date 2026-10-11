@@ -11,7 +11,7 @@ PACKAGES := $(foreach module,$(MODULES),./$(module)/...)
 # modules their go.mod names; `samples-local` checks them against this working tree through a
 # throwaway workspace under .tools/, so neither the root go.work nor a sample's go.mod has to
 # change.
-SAMPLES := samples/configdirector/gin samples/configdirector-openfeature/gin
+SAMPLES := samples/configdirector/gin samples/configdirector/net-http samples/configdirector-openfeature/gin
 SAMPLES_WORKSPACE := $(CURDIR)/.tools/samples/go.work
 
 # Each binary's path carries its version, so bumping the version reinstalls it on the next run.

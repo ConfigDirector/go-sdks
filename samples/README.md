@@ -8,6 +8,7 @@ different web frameworks, grouped by the module they demonstrate.
 | Sample | Framework | Description |
 |---|---|---|
 | [gin/](configdirector/gin/) | [Gin](https://gin-gonic.com) | Minimal HTTP app: one client per process, per-request evaluation, clean shutdown |
+| [net-http/](configdirector/net-http/) | Standard library [`net/http`](https://pkg.go.dev/net/http) | The same app without a framework, routed by an `http.ServeMux` |
 
 ## [configdirector-openfeature](configdirector-openfeature/)
 

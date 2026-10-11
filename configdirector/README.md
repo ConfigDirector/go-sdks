@@ -119,8 +119,9 @@ become ready.
 
 ## Sample apps
 
-The [Gin sample](../samples/configdirector/gin/) is a small runnable application using this SDK,
-with a test on `configdirectortest`.
+The [Gin sample](../samples/configdirector/gin/) and the [net/http sample](../samples/configdirector/net-http/),
+which uses only the standard library, are small runnable applications using this SDK, each with a
+test on `configdirectortest`.
 
 ## Getting Help
 
