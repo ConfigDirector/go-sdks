@@ -1,4 +1,4 @@
 package configdirector
 
 // Version is the version of this SDK module.
-const Version = "0.2.0"
+const Version = "0.2.1"
