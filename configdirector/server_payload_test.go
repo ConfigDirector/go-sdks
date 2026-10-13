@@ -44,11 +44,7 @@ func FuzzParseServerPayload(f *testing.F) {
 		require.NotNil(t, wire.Configs)
 		readableKeys := slices.Sorted(maps.Keys(payload.configs))
 		require.ElementsMatch(t, slices.Sorted(maps.Keys(wire.Configs)), slices.Concat(readableKeys, payload.unreadableConfigKeys()))
-		unreadableSegmentIDs := make([]string, 0, len(payload.unreadableSegments))
-		for _, segment := range payload.unreadableSegments {
-			unreadableSegmentIDs = append(unreadableSegmentIDs, segment.id)
-		}
-		require.ElementsMatch(t, slices.Sorted(maps.Keys(wire.Segments)), slices.Concat(slices.Sorted(maps.Keys(payload.segments)), unreadableSegmentIDs))
+		require.ElementsMatch(t, slices.Sorted(maps.Keys(wire.Segments)), slices.Concat(slices.Sorted(maps.Keys(payload.segments)), payload.unreadableSegmentIDs()))
 		for _, definition := range payload.configs {
 			require.NotEmpty(t, definition.id)
 			require.NotEmpty(t, definition.key)

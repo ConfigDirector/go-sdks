@@ -279,8 +279,7 @@ func TestAConfigWithAConditionOfAnUnknownKindIsSkipped(t *testing.T) {
 
 func TestASegmentThatCannotBeReadIsSkippedWhileTheRestLoad(t *testing.T) {
 	t.Parallel()
-	payload := fullPayload(boolConfigTrueInSegment("beta-banner", betaSegmentID)).withSegment(betaSegmentID, "beta")
-	payload.fields["segments"].(map[string]any)["segment-broken"] = map[string]any{"groups": []any{[]any{inSegment(betaSegmentID)}}}
+	payload := fullPayload(boolConfigTrueInSegment("beta-banner", betaSegmentID)).withSegment(betaSegmentID, "beta").withSegmentDefinition("segment-broken", map[string]any{"groups": []any{[]any{inSegment(betaSegmentID)}}})
 	client, records := newLoggedClient(t, startSDKServer(t, payload.json()))
 	waitForReady(t, client)
 
@@ -289,6 +288,18 @@ func TestASegmentThatCannotBeReadIsSkippedWhileTheRestLoad(t *testing.T) {
 	require.True(t, value)
 	require.Len(t, recordsAt(slog.LevelWarn, records()), 1)
 	require.Equal(t, "segment-broken", attributesOf(recordsAt(slog.LevelWarn, records())[0])["segmentId"])
+}
+
+func TestAFullPayloadKeepsThePreviousDefinitionOfASegmentItCannotRead(t *testing.T) {
+	t.Parallel()
+	client, server := newReadyClientAgainst(t, fullPayload(boolConfigTrueInSegment("beta-banner", betaSegmentID)).withSegment(betaSegmentID, "beta"))
+	updates := newRecorder[configdirector.ConfigsUpdated]()
+	client.OnConfigsUpdated(updates.record)
+
+	server.send(fullPayload(boolConfigTrueInSegment("beta-banner", betaSegmentID)).withSegmentDefinition(betaSegmentID, map[string]any{}).json())
+
+	require.Equal(t, configdirector.ConfigsUpdated{Keys: []string{"beta-banner"}, RemovedKeys: []string{}}, updates.next(t))
+	require.True(t, client.BoolValue("beta-banner", false, betaUser))
 }
 
 func TestAPayloadVersionOtherThanOneIsLoggedOnceAndReadAnyway(t *testing.T) {

@@ -24,11 +24,24 @@ func payload(kind payloadKind, definitions ...configDefinition) serverPayload {
 	return serverPayload{kind: kind, configs: byKey, segments: evaluation.Segments{}}
 }
 
-func withUnreadable(payload serverPayload, keys ...string) serverPayload {
+func withUnreadableConfigs(payload serverPayload, keys ...string) serverPayload {
 	for _, key := range keys {
 		payload.unreadableConfigs = append(payload.unreadableConfigs, unreadableConfig{key: key})
 	}
 	return payload
+}
+
+func withUnreadableSegments(payload serverPayload, segmentIDs ...string) serverPayload {
+	for _, segmentID := range segmentIDs {
+		payload.unreadableSegments = append(payload.unreadableSegments, unreadableSegment{id: segmentID})
+	}
+	return payload
+}
+
+func segmentMatchingIdentifier(identifier string) evaluation.Segment {
+	return evaluation.Segment{Groups: [][]evaluation.AttributeCondition{{
+		{ID: "condition-" + identifier, Attribute: "identifier", Operator: "=", TargetType: "text", TargetValues: []string{identifier}},
+	}}}
 }
 
 func valuesOf(snapshot *configSnapshot) map[string]string {
@@ -60,15 +73,42 @@ func TestAFullPayloadKeepsThePreviousDefinitionOfAConfigItCouldNotRead(t *testin
 	var none *configSnapshot
 	previous := none.withPayload(payload(payloadKindFull, textConfig("a", "1"), textConfig("b", "2")))
 
-	snapshot := previous.withPayload(withUnreadable(payload(payloadKindFull, textConfig("a", "10")), "b"))
+	snapshot := previous.withPayload(withUnreadableConfigs(payload(payloadKindFull, textConfig("a", "10")), "b"))
 
 	require.Equal(t, map[string]string{"a": "10", "b": "2"}, valuesOf(snapshot))
+}
+
+func TestAFullPayloadKeepsThePreviousDefinitionOfASegmentItCouldNotRead(t *testing.T) {
+	var none *configSnapshot
+	previous := none.withPayload(serverPayload{kind: payloadKindFull, segments: evaluation.Segments{
+		"s-1": segmentMatchingIdentifier("u-1"),
+		"s-2": segmentMatchingIdentifier("u-2"),
+	}})
+
+	snapshot := previous.withPayload(withUnreadableSegments(
+		serverPayload{kind: payloadKindFull, segments: evaluation.Segments{"s-1": segmentMatchingIdentifier("u-10")}},
+		"s-2",
+	))
+
+	require.Equal(t, evaluation.Segments{"s-1": segmentMatchingIdentifier("u-10"), "s-2": segmentMatchingIdentifier("u-2")}, snapshot.segments)
+}
+
+func TestAFullPayloadHoldsNothingForASegmentItCouldNotReadThatWasNotHeld(t *testing.T) {
+	var none *configSnapshot
+	previous := none.withPayload(serverPayload{kind: payloadKindFull, segments: evaluation.Segments{"s-1": segmentMatchingIdentifier("u-1")}})
+
+	snapshot := previous.withPayload(withUnreadableSegments(
+		serverPayload{kind: payloadKindFull, segments: evaluation.Segments{"s-1": segmentMatchingIdentifier("u-10")}},
+		"s-2",
+	))
+
+	require.Equal(t, evaluation.Segments{"s-1": segmentMatchingIdentifier("u-10")}, snapshot.segments)
 }
 
 func TestAFirstPayloadHoldsNothingForAConfigItCouldNotRead(t *testing.T) {
 	var none *configSnapshot
 
-	snapshot := none.withPayload(withUnreadable(payload(payloadKindFull, textConfig("a", "1")), "b"))
+	snapshot := none.withPayload(withUnreadableConfigs(payload(payloadKindFull, textConfig("a", "1")), "b"))
 
 	require.Equal(t, map[string]string{"a": "1"}, valuesOf(snapshot))
 }

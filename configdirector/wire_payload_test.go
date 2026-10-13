@@ -45,6 +45,11 @@ func (payload payloadBuilder) withSegment(segmentID string, plan string) payload
 	return payload
 }
 
+func (payload payloadBuilder) withSegmentDefinition(segmentID string, definition any) payloadBuilder {
+	payload.fields["segments"].(map[string]any)[segmentID] = definition
+	return payload
+}
+
 func (payload payloadBuilder) withConfig(key string, config any) payloadBuilder {
 	payload.fields["configs"].(map[string]any)[key] = config
 	return payload

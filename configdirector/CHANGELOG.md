@@ -9,6 +9,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- When a full update carries a segment the client cannot read, the client now keeps the definition
+  of that segment it already holds, as the warning it logs says and as it already did for configs
+  and in delta updates. Before, it dropped the segment, and until a later update carried it in a
+  readable form, a targeting rule using it matched no context, for `in` and `not in` conditions
+  alike: every context the rule should have matched got the next rule's value or the default
+  targeting rule value instead.
+
 ## [0.2.1] - 2026-10-10
 
 ### Fixed

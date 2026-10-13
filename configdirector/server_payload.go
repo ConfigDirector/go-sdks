@@ -60,6 +60,14 @@ func (payload serverPayload) unreadableConfigKeys() []string {
 	return keys
 }
 
+func (payload serverPayload) unreadableSegmentIDs() []string {
+	segmentIDs := make([]string, 0, len(payload.unreadableSegments))
+	for _, segment := range payload.unreadableSegments {
+		segmentIDs = append(segmentIDs, segment.id)
+	}
+	return segmentIDs
+}
+
 type wirePayload struct {
 	PayloadVersion json.RawMessage            `json:"payloadVersion"`
 	Kind           string                     `json:"kind"`

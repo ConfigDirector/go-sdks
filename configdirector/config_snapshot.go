@@ -22,15 +22,21 @@ func (snapshot *configSnapshot) withPayload(payload serverPayload) *configSnapsh
 func (snapshot *configSnapshot) replacedBy(payload serverPayload) *configSnapshot {
 	replaced := &configSnapshot{
 		configs:  make(map[string]configDefinition, len(payload.configs)),
-		segments: maps.Clone(payload.segments),
+		segments: make(evaluation.Segments, len(payload.segments)),
 	}
 	maps.Copy(replaced.configs, payload.configs)
+	maps.Copy(replaced.segments, payload.segments)
 	if snapshot == nil {
 		return replaced
 	}
 	for _, key := range payload.unreadableConfigKeys() {
-		if held, found := snapshot.configs[key]; found {
-			replaced.configs[key] = held
+		if heldDefinition, found := snapshot.configs[key]; found {
+			replaced.configs[key] = heldDefinition
+		}
+	}
+	for _, segmentID := range payload.unreadableSegmentIDs() {
+		if heldDefinition, found := snapshot.segments[segmentID]; found {
+			replaced.segments[segmentID] = heldDefinition
 		}
 	}
 	return replaced
