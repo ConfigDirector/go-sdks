@@ -216,3 +216,27 @@ func TestASegmentWithNoGroupsMatchesNoContext(t *testing.T) {
 	require.False(t, SegmentCondition{Operator: "in", SegmentID: acmeSegmentID}.holdsFor(context, segments))
 	require.True(t, SegmentCondition{Operator: "not in", SegmentID: acmeSegmentID}.holdsFor(context, segments))
 }
+
+func TestKindConditionComparesTheContextKind(t *testing.T) {
+	condition := textCondition("kind", "", "is one of", "device", "tenant")
+
+	require.True(t, condition.holdsFor(Context{Kind: "device"}, nil))
+	require.False(t, condition.holdsFor(Context{Kind: "organization"}, nil))
+}
+
+func TestAnOmittedKindComparesAsUser(t *testing.T) {
+	condition := textCondition("kind", "", "equals", "user")
+
+	require.True(t, condition.holdsFor(Context{}, nil))
+	require.True(t, condition.holdsFor(Context{Kind: "user"}, nil))
+	require.False(t, condition.holdsFor(Context{Kind: "device"}, nil))
+}
+
+func TestATraitNamedKindIsAnOrdinaryTrait(t *testing.T) {
+	traitCondition := textCondition("traits", "/kind", "equals", "robot")
+	kindCondition := textCondition("kind", "", "equals", "robot")
+	context := Context{Kind: "device", Traits: map[string]any{"kind": "robot"}}
+
+	require.True(t, traitCondition.holdsFor(context, nil))
+	require.False(t, kindCondition.holdsFor(context, nil))
+}

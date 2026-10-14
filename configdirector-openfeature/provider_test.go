@@ -218,6 +218,22 @@ func TestTheEvaluationContextReachesTheClientAsAUserContext(t *testing.T) {
 	require.Equal(t, configdirector.UserContext{ID: "user-1", Name: "Ada", Traits: map[string]any{"plan": "pro"}, Anonymous: true}, await(t, evaluated))
 }
 
+func TestAnInvalidContextKindResolvesSuccessfullyToTheNoContextValue(t *testing.T) {
+	t.Parallel()
+	fixture := registeredProviderServing(t, map[string]any{"greeting": "hello"})
+	evaluated := make(chan configdirector.UserContext, 1)
+	fixture.testClient.Client().OnConfigEvaluated(func(evaluation configdirector.Evaluation) { evaluated <- evaluation.UserContext })
+	evaluationContext := openfeature.NewEvaluationContext("42", map[string]any{"kind": "Device"})
+
+	details, err := fixture.client.StringValueDetails(t.Context(), "greeting", "fallback", evaluationContext)
+
+	require.NoError(t, err)
+	require.Equal(t, "hello", details.Value)
+	require.Equal(t, openfeature.TargetingMatchReason, details.Reason)
+	require.Empty(t, details.ErrorCode)
+	require.Equal(t, configdirector.UserContext{}, await(t, evaluated))
+}
+
 func TestTheFirstConfigStateAnnouncesEveryFlag(t *testing.T) {
 	t.Parallel()
 	fixture := providerServing(t, map[string]any{"greeting": "hello", "new-checkout": true})

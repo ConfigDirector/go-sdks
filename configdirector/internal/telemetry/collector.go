@@ -33,19 +33,24 @@ type Options struct {
 	FlushInterval time.Duration
 }
 
-// Collector collects evaluations and the contexts they were made for and reports them on a
-// schedule: a first report 5 seconds after Start, then one every flush interval, and a last one
-// on Close. Nothing is sent when nothing was collected.
+// Collector collects evaluations, the contexts they were made for and the invalid contexts
+// that were ignored, and reports them on a schedule: a first report 5 seconds after Start, then
+// one every flush interval, and a last one on Close. Nothing is sent when nothing was collected.
 //
-// The queue is the only buffer: EventQueueLimit entries, split 70% evaluations and 30% distinct
-// contexts, freed by every report. When a share is full the oldest entry is dropped and counted
-// in the next report. A fatal refusal from the SDK server, a 4xx other than 429, stops collection
-// for good with one error log.
+// The queue is the buffer for evaluations and contexts: EventQueueLimit entries, split 70%
+// evaluations and 30% distinct contexts, freed by every report. When a share is full the oldest
+// entry is dropped and counted in the next report. Invalid context submissions are held as at
+// most DistinctContextKindSampleLimit context kind samples with their counts plus one count for
+// the rest, freed by every report too. A fatal refusal from the SDK server, a 4xx other than 429,
+// stops collection for good with one error log; invalid context submissions made after that are
+// still held, within the same bound, so that each distinct context kind is logged at most once
+// more, and are never sent.
 type Collector struct {
-	reporter      *httpReporter
-	evaluations   *eventQueue
-	contexts      *contextRegistry
-	flushInterval time.Duration
+	reporter        *httpReporter
+	evaluations     *eventQueue
+	contexts        *contextRegistry
+	invalidContexts *invalidContextSubmissions
+	flushInterval   time.Duration
 
 	collecting atomic.Bool
 	closing    chan struct{}
@@ -57,12 +62,13 @@ type Collector struct {
 func Start(options Options) *Collector {
 	evaluationLimit := options.EventQueueLimit * evaluationShareTenths / 10
 	collector := &Collector{
-		reporter:      newHTTPReporter(options.Transport),
-		evaluations:   newEventQueue(evaluationLimit),
-		contexts:      newContextRegistry(options.EventQueueLimit - evaluationLimit),
-		flushInterval: options.FlushInterval,
-		closing:       make(chan struct{}),
-		done:          make(chan struct{}),
+		reporter:        newHTTPReporter(options.Transport),
+		evaluations:     newEventQueue(evaluationLimit),
+		contexts:        newContextRegistry(options.EventQueueLimit - evaluationLimit),
+		invalidContexts: newInvalidContextSubmissions(),
+		flushInterval:   options.FlushInterval,
+		closing:         make(chan struct{}),
+		done:            make(chan struct{}),
 	}
 	collector.collecting.Store(true)
 	go collector.run()
@@ -80,10 +86,19 @@ func (collector *Collector) Record(evaluation Evaluation, context Context) {
 	event := evaluatedConfigEvent{evaluation: evaluation}
 	if context.identified() {
 		event.contextID = context.ID
+		event.contextKind = context.Kind
 		context.Traits = maps.Clone(context.Traits)
 		collector.contexts.add(context)
 	}
 	collector.evaluations.push(event, time.Now())
+}
+
+// RecordInvalidContext counts one evaluation that was supplied a context with an invalid
+// context kind, of which contextKindSample is the kind cut to 128 characters, and says whether
+// the client should log it: each distinct sample once per report, then once that further
+// context kinds go unnamed.
+func (collector *Collector) RecordInvalidContext(contextKindSample string) InvalidContextRecording {
+	return collector.invalidContexts.record(contextKindSample, time.Now())
 }
 
 // Close stops collecting and sends what was collected. It returns once that report is sent or
@@ -127,7 +142,8 @@ func (collector *Collector) run() {
 }
 
 func (collector *Collector) flush() reportOutcome {
-	batch := collector.evaluations.takeBatch(time.Now())
+	now := time.Now()
+	batch := collector.evaluations.takeBatch(now)
 	contexts, droppedContexts := collector.contexts.takeCaptured()
 	report := eventReport{
 		startTime:          batch.startTime,
@@ -136,6 +152,7 @@ func (collector *Collector) flush() reportOutcome {
 		droppedEvaluations: batch.dropped,
 		contexts:           contexts,
 		droppedContexts:    droppedContexts,
+		invalidContexts:    collector.invalidContexts.takeBatch(now),
 	}
 	if report.isEmpty() {
 		return reportSkippedEmpty
@@ -147,6 +164,7 @@ func (collector *Collector) stopCollecting() {
 	collector.collecting.Store(false)
 	collector.evaluations.clear()
 	collector.contexts.clear()
+	collector.invalidContexts.clear()
 }
 
 // Discarding is the telemetry of a client that reports nothing, such as one built by package
@@ -155,6 +173,12 @@ type Discarding struct{}
 
 // Record discards the evaluation.
 func (Discarding) Record(Evaluation, Context) {}
+
+// RecordInvalidContext discards the submission. Nothing de-duplicates what is logged when
+// nothing is reported, so every submission is one to log.
+func (Discarding) RecordInvalidContext(string) InvalidContextRecording {
+	return InvalidContextSampled
+}
 
 // Close does nothing.
 func (Discarding) Close() {}

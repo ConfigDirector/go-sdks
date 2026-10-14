@@ -404,6 +404,41 @@ func TestReadsEvaluateSegmentsAgainstTheUserTraits(t *testing.T) {
 	require.False(t, other)
 }
 
+func TestReadsEvaluateKindConditionsAgainstTheContextKind(t *testing.T) {
+	t.Parallel()
+	client := newReadyClientServing(t, boolConfigTrueWhen("device-banner", contextKindIsOneOf("device", "tenant")))
+
+	device := client.BoolValue("device-banner", false, configdirector.UserContext{ID: "42", Kind: "device"})
+	user := client.BoolValue("device-banner", false, configdirector.UserContext{ID: "42"})
+
+	require.True(t, device)
+	require.False(t, user)
+}
+
+func TestAnOmittedKindEvaluatesAsAUser(t *testing.T) {
+	t.Parallel()
+	client := newReadyClientServing(t, boolConfigTrueWhen("user-banner", contextKindIsOneOf("user")))
+
+	identified := client.BoolValue("user-banner", false, configdirector.UserContext{ID: "42"})
+	withoutContext := client.BoolValue("user-banner", false, noUser)
+	device := client.BoolValue("user-banner", false, configdirector.UserContext{ID: "42", Kind: "device"})
+
+	require.True(t, identified)
+	require.True(t, withoutContext)
+	require.False(t, device)
+}
+
+func TestADeviceAndAUserWithTheSameIDTakeTheirOwnBuckets(t *testing.T) {
+	t.Parallel()
+	client := newReadyClientServing(t, evenSplitConfig("variant"))
+
+	user := client.StringValue("variant", "fallback", configdirector.UserContext{ID: "user-1"})
+	device := client.StringValue("variant", "fallback", configdirector.UserContext{ID: "user-1", Kind: "device"})
+
+	require.Equal(t, "0", user)
+	require.Equal(t, "1", device)
+}
+
 func TestReadsEvaluateTargetingRulesAgainstTheApplicationMetadata(t *testing.T) {
 	t.Parallel()
 	server := startSDKServer(t, standardPayload().json())

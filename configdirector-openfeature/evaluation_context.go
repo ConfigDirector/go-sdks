@@ -8,15 +8,17 @@ import (
 )
 
 const (
-	idAttribute        = "id"
-	nameAttribute      = "name"
-	traitsAttribute    = "traits"
-	anonymousAttribute = "anonymous"
+	idAttribute          = "id"
+	contextKindAttribute = "kind"
+	nameAttribute        = "name"
+	traitsAttribute      = "traits"
+	anonymousAttribute   = "anonymous"
 )
 
 func userContextFrom(flattenedContext openfeature.FlattenedContext) configdirector.UserContext {
 	return configdirector.UserContext{
 		ID:        identifierIn(flattenedContext),
+		Kind:      textOf(flattenedContext[contextKindAttribute]),
 		Name:      textOf(flattenedContext[nameAttribute]),
 		Traits:    traitsOf(flattenedContext[traitsAttribute]),
 		Anonymous: anonymousOf(flattenedContext[anonymousAttribute]),

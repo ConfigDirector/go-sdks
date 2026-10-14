@@ -1,13 +1,20 @@
 package configdirector
 
-// UserContext is the user a config is evaluated for. Targeting rules match on its fields, and
-// percentage rollouts bucket by ID. It is named UserContext rather than Context because Go's own
+// UserContext is the context a config is evaluated for: a user, or an entity of another kind
+// such as a device or a tenant. Targeting rules match on its fields, and percentage rollouts
+// bucket by ID and Kind. It is named UserContext rather than Context because Go's own
 // context.Context takes the short name.
 type UserContext struct {
 	// ID uniquely identifies the user. It decides which bucket of a percentage rollout the user
 	// falls in, so changing it can move the user to a different bucket. Leave it empty for a user
 	// without a stable identity.
 	ID string
+
+	// Kind is the kind of entity the context represents, such as device, organization or tenant.
+	// Leave it empty for a user. A kind has 1 to 64 characters, using only lowercase letters,
+	// digits, - and _, and is used exactly as given. A context whose kind is invalid is ignored:
+	// the error is logged and the config is evaluated as if no context had been supplied.
+	Kind string
 
 	// Name is the user's display name. It is shown in the ConfigDirector dashboard and usable in
 	// targeting rules.
@@ -137,7 +144,8 @@ type Evaluation struct {
 	// was returned.
 	ValueID string
 
-	// UserContext is the user the config was evaluated for.
+	// UserContext is the context the config was evaluated for: the one supplied, or UserContext{}
+	// when the supplied context was ignored for an invalid Kind.
 	UserContext UserContext
 }
 

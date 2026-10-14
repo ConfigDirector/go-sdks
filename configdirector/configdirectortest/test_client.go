@@ -5,7 +5,8 @@
 // the connection to ConfigDirector is replaced: value parsing, targeting evaluation, watches,
 // events and readiness are the production code, so the code under test behaves as it does against
 // ConfigDirector, and no network connection is opened, no telemetry is sent and no goroutine is
-// started.
+// started. Since no telemetry is sent, every read supplied a context with an invalid kind logs an
+// error, rather than each distinct kind once per telemetry flush interval.
 //
 //	testClient := configdirectortest.NewTestClient(map[string]any{"new-checkout": true})
 //	defer testClient.Close()

@@ -26,9 +26,12 @@ const (
 // makes no network calls.
 //
 // The OpenFeature evaluation context maps onto the ConfigDirector UserContext: the targeting
-// key, or failing that an "id" attribute, becomes ID; a "name" attribute becomes Name; a "traits"
+// key, or failing that an "id" attribute, becomes ID; a "kind" attribute becomes Kind, the
+// context kind, with user when it is left out; a "name" attribute becomes Name; a "traits"
 // attribute holding a map[string]any becomes Traits; and a boolean "anonymous" attribute becomes
-// Anonymous.
+// Anonymous. A "kind" inside "traits" is an ordinary trait. An evaluation whose context has an
+// invalid kind still resolves successfully, to the value for no context, and the SDK logs the
+// error.
 //
 // If the first config state does not arrive within the connection timeout, initialization still
 // completes and evaluations return their default value with the error code PROVIDER_NOT_READY.

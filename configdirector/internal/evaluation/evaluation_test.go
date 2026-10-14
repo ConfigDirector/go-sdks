@@ -186,6 +186,25 @@ func TestAContextWithoutAnIdentifierTakesTheFirstBucketWithWidth(t *testing.T) {
 	require.Equal(t, "1", served.Text)
 }
 
+func TestADeviceWithoutAnIdentifierTakesTheFirstBucketWithWidthToo(t *testing.T) {
+	config := configWith(percentageRule(bucket("b0", 0, "0"), bucket("b1", 10, "1"), bucket("b2", 90, "2")))
+
+	served := Evaluate(config, Context{Kind: "device"}, nil)
+
+	require.Equal(t, "1", served.Text)
+}
+
+func TestADeviceAndAUserWithTheSameIdentifierCanLandInDifferentBuckets(t *testing.T) {
+	config := configWith(percentageRule(bucket("b0", 50, "0"), bucket("b1", 50, "1")))
+	config.ID = "11111111-1111-4111-8111-111111111111"
+
+	user := Evaluate(config, Context{Identifier: "user-1"}, nil)
+	device := Evaluate(config, Context{Identifier: "user-1", Kind: "device"}, nil)
+
+	require.Equal(t, "0", user.Text)
+	require.Equal(t, "1", device.Text)
+}
+
 func TestBucketsThatDoNotCoverTheContextServeTheDefaultTargetingRuleValue(t *testing.T) {
 	config := configWith(percentageRule(bucket("b0", 10, "0"), bucket("b1", 10, "1")))
 

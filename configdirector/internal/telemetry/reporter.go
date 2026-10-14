@@ -21,19 +21,23 @@ type eventReport struct {
 	droppedEvaluations int
 	contexts           []Context
 	droppedContexts    int
+	invalidContexts    invalidContextBatch
 }
 
 func (report eventReport) isEmpty() bool {
-	return len(report.evaluations) == 0 && len(report.contexts) == 0 && report.droppedEvaluations == 0 && report.droppedContexts == 0
+	return len(report.evaluations) == 0 && len(report.contexts) == 0 && report.droppedEvaluations == 0 && report.droppedContexts == 0 && len(report.invalidContexts.entries) == 0
 }
 
 func (report eventReport) wire(serverSDKKey string, metaContext transport.MetaContext) wireReport {
 	wire := wireReport{
-		ServerSDKKey:     serverSDKKey,
-		MetaContext:      metaContext,
-		DiscreteEvents:   wireDiscreteEvents{CapturedContexts: make([]wireContext, 0, len(report.contexts))},
-		AggregatedEvents: wireAggregatedEvents{EvaluatedConfig: make([]wireAggregatedEvent, 0, len(report.evaluations))},
-		DroppedEvents:    wireDroppedEvents{EvaluatedConfig: report.droppedEvaluations, CapturedContexts: report.droppedContexts},
+		ServerSDKKey:   serverSDKKey,
+		MetaContext:    metaContext,
+		DiscreteEvents: wireDiscreteEvents{CapturedContexts: make([]wireContext, 0, len(report.contexts))},
+		AggregatedEvents: wireAggregatedEvents{
+			EvaluatedConfig: make([]wireAggregatedEvent, 0, len(report.evaluations)),
+			InvalidContext:  make([]wireAggregatedInvalidContext, 0, len(report.invalidContexts.entries)),
+		},
+		DroppedEvents: wireDroppedEvents{EvaluatedConfig: report.droppedEvaluations, CapturedContexts: report.droppedContexts},
 	}
 	for _, captured := range report.contexts {
 		wire.DiscreteEvents.CapturedContexts = append(wire.DiscreteEvents.CapturedContexts, captured.wire())
@@ -44,6 +48,14 @@ func (report eventReport) wire(serverSDKKey string, metaContext transport.MetaCo
 			EndTime:   wireTime(report.endTime),
 			Count:     aggregated.count,
 			Event:     aggregated.event.wire(),
+		})
+	}
+	for _, entry := range report.invalidContexts.entries {
+		wire.AggregatedEvents.InvalidContext = append(wire.AggregatedEvents.InvalidContext, wireAggregatedInvalidContext{
+			StartTime: wireTime(report.invalidContexts.startTime),
+			EndTime:   wireTime(report.invalidContexts.endTime),
+			Count:     entry.count,
+			Event:     entry.wire(),
 		})
 	}
 	return wire
@@ -62,7 +74,8 @@ type wireDiscreteEvents struct {
 }
 
 type wireAggregatedEvents struct {
-	EvaluatedConfig []wireAggregatedEvent `json:"evaluatedConfig"`
+	EvaluatedConfig []wireAggregatedEvent          `json:"evaluatedConfig"`
+	InvalidContext  []wireAggregatedInvalidContext `json:"invalidContext"`
 }
 
 type wireDroppedEvents struct {
@@ -75,6 +88,13 @@ type wireAggregatedEvent struct {
 	EndTime   wireTime                 `json:"endTime"`
 	Count     int                      `json:"count"`
 	Event     wireEvaluatedConfigEvent `json:"event"`
+}
+
+type wireAggregatedInvalidContext struct {
+	StartTime wireTime                `json:"startTime"`
+	EndTime   wireTime                `json:"endTime"`
+	Count     int                     `json:"count"`
+	Event     wireInvalidContextEvent `json:"event"`
 }
 
 type wireTime time.Time
@@ -134,7 +154,7 @@ func (reporter *httpReporter) send(report eventReport) reportOutcome {
 	outcome := outcomeOfStatus(status)
 	switch outcome {
 	case reportSent:
-		logger.Debug("Sent a telemetry report", slog.Int("evaluations", len(report.evaluations)), slog.Int("contexts", len(report.contexts)))
+		logger.Debug("Sent a telemetry report", slog.Int("evaluations", len(report.evaluations)), slog.Int("contexts", len(report.contexts)), slog.Int("invalidContexts", len(report.invalidContexts.entries)))
 	case reportRefusedForGood:
 		logger.Error("The SDK server refused the telemetry report; no more telemetry is sent", slog.Int("status", status), slog.String("detail", http.StatusText(status)))
 	case reportFailed:

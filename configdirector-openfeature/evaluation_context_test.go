@@ -32,6 +32,38 @@ func TestTheTargetingKeyWinsOverAnIDAttribute(t *testing.T) {
 	require.Equal(t, "user-1", userContext.ID)
 }
 
+func TestATopLevelKindBecomesTheKind(t *testing.T) {
+	t.Parallel()
+
+	userContext := userContextFrom(openfeature.FlattenedContext{openfeature.TargetingKey: "42", "kind": "device"})
+
+	require.Equal(t, configdirector.UserContext{ID: "42", Kind: "device"}, userContext)
+}
+
+func TestAKindInsideTraitsStaysATrait(t *testing.T) {
+	t.Parallel()
+
+	userContext := userContextFrom(openfeature.FlattenedContext{"traits": map[string]any{"kind": "robot"}})
+
+	require.Equal(t, configdirector.UserContext{Traits: map[string]any{"kind": "robot"}}, userContext)
+}
+
+func TestANumberKindIsItsText(t *testing.T) {
+	t.Parallel()
+
+	userContext := userContextFrom(openfeature.FlattenedContext{"kind": 42})
+
+	require.Equal(t, configdirector.UserContext{Kind: "42"}, userContext)
+}
+
+func TestAStructuredKindIsLeftEmpty(t *testing.T) {
+	t.Parallel()
+
+	userContext := userContextFrom(openfeature.FlattenedContext{"kind": []any{"device"}})
+
+	require.Equal(t, configdirector.UserContext{}, userContext)
+}
+
 func TestNameTraitsAndAnonymousMapOntoTheirFields(t *testing.T) {
 	t.Parallel()
 

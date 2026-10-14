@@ -9,6 +9,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- `UserContext.Kind`, the kind of entity the context represents, such as `device`,
+  `organization` or `tenant`; leaving it empty means `user`. A kind has 1 to 64 characters, using
+  only lowercase letters, digits, `-` and `_`, and is used exactly as given. Targeting rules and
+  segments can match on a context's kind, and percentage rollouts give contexts of other kinds
+  their own assignments while `user` contexts keep the ones they have today. ConfigDirector keeps
+  a context per kind and identifier, so user 42 and device 42 are separate contexts.
+- A context with an invalid kind never makes the client panic: every read, `AllConfigs` and every
+  watch evaluate exactly as if `UserContext{}` had been passed, and the `Evaluation` handed to
+  `OnConfigEvaluated` carries `UserContext{}`. The client logs an error for each distinct invalid
+  kind once per telemetry flush interval, and a `configdirectortest` client logs every such read.
+  ConfigDirector receives a count of these reads with a sample of each invalid kind, never the
+  context's identifier, name or traits.
+
 ### Fixed
 
 - When a full update carries a segment the client cannot read, the client now keeps the definition

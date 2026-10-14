@@ -19,7 +19,8 @@ type telemetryReport struct {
 		CapturedContexts []capturedContext `json:"capturedContexts"`
 	} `json:"discreteEvents"`
 	AggregatedEvents struct {
-		EvaluatedConfig []aggregatedEvaluation `json:"evaluatedConfig"`
+		EvaluatedConfig []aggregatedEvaluation     `json:"evaluatedConfig"`
+		InvalidContext  []aggregatedInvalidContext `json:"invalidContext"`
 	} `json:"aggregatedEvents"`
 	DroppedEvents struct {
 		EvaluatedConfig  int `json:"evaluatedConfig"`
@@ -29,6 +30,7 @@ type telemetryReport struct {
 
 type capturedContext struct {
 	ID     string         `json:"id"`
+	Kind   string         `json:"kind"`
 	Name   *string        `json:"name"`
 	Traits map[string]any `json:"traits"`
 }
@@ -40,8 +42,21 @@ type aggregatedEvaluation struct {
 	Event     evaluatedConfigEvent `json:"event"`
 }
 
+type aggregatedInvalidContext struct {
+	StartTime string              `json:"startTime"`
+	EndTime   string              `json:"endTime"`
+	Count     int                 `json:"count"`
+	Event     invalidContextEvent `json:"event"`
+}
+
+type invalidContextEvent struct {
+	Reason     string  `json:"reason"`
+	KindSample *string `json:"kindSample"`
+}
+
 type evaluatedConfigEvent struct {
 	ContextID        *string        `json:"contextId"`
+	ContextKind      *string        `json:"contextKind"`
 	Key              string         `json:"key"`
 	Type             *string        `json:"type"`
 	DefaultValue     telemetryValue `json:"defaultValue"`
@@ -126,6 +141,7 @@ func TestTwoIdenticalReadsArriveAsOneEventWithACountOfTwo(t *testing.T) {
 	requireRFC3339Millis(t, aggregated.EndTime)
 	require.Equal(t, evaluatedConfigEvent{
 		ContextID:        new("user-123"),
+		ContextKind:      new("user"),
 		Key:              "new-checkout",
 		Type:             new("boolean"),
 		DefaultValue:     inline("false"),
@@ -167,6 +183,7 @@ func TestAReadThatUsedTheDefaultCarriesUsedDefaultAndTheReason(t *testing.T) {
 	require.Equal(t, inline("10"), event.EvaluatedValue)
 	require.Nil(t, event.EvaluatedValueID)
 	require.Nil(t, event.ContextID)
+	require.Nil(t, event.ContextKind)
 }
 
 func TestAReadOfAnUnknownKeyCarriesNoConfigType(t *testing.T) {
@@ -355,7 +372,7 @@ func TestAnIdentifiedContextIsCapturedOnceAcrossItsReads(t *testing.T) {
 	client.StringValue("welcome-message", "fallback", identifiedUser)
 
 	report := reportAfterClosing(t, client, server)
-	require.Equal(t, []capturedContext{{ID: "user-123", Name: new("Ada"), Traits: map[string]any{"plan": "pro"}}}, report.DiscreteEvents.CapturedContexts)
+	require.Equal(t, []capturedContext{{ID: "user-123", Kind: "user", Name: new("Ada"), Traits: map[string]any{"plan": "pro"}}}, report.DiscreteEvents.CapturedContexts)
 	require.Equal(t, new("user-123"), eventsOf(report)[0].Event.ContextID)
 	require.Equal(t, new("user-123"), eventsOf(report)[1].Event.ContextID)
 }
@@ -369,7 +386,7 @@ func TestACapturedContextKeepsTheTraitsItWasReadWithWhenTheCallerChangesTheMap(t
 	traits["plan"] = "enterprise"
 
 	report := reportAfterClosing(t, client, server)
-	require.Equal(t, []capturedContext{{ID: "user-789", Traits: map[string]any{"plan": "pro"}}}, report.DiscreteEvents.CapturedContexts)
+	require.Equal(t, []capturedContext{{ID: "user-789", Kind: "user", Traits: map[string]any{"plan": "pro"}}}, report.DiscreteEvents.CapturedContexts)
 }
 
 func TestAContextWithOnlyAnIDIsCapturedWithoutNameOrTraits(t *testing.T) {
@@ -379,7 +396,7 @@ func TestAContextWithOnlyAnIDIsCapturedWithoutNameOrTraits(t *testing.T) {
 	client.BoolValue("new-checkout", false, configdirector.UserContext{ID: "user-456"})
 
 	report := reportAfterClosing(t, client, server)
-	require.Equal(t, []capturedContext{{ID: "user-456"}}, report.DiscreteEvents.CapturedContexts)
+	require.Equal(t, []capturedContext{{ID: "user-456", Kind: "user"}}, report.DiscreteEvents.CapturedContexts)
 }
 
 func TestAnAnonymousContextIsNeitherCapturedNorIdentified(t *testing.T) {
@@ -402,6 +419,95 @@ func TestAContextWithoutAnIDIsNeitherCapturedNorIdentified(t *testing.T) {
 	report := reportAfterClosing(t, client, server)
 	require.Empty(t, report.DiscreteEvents.CapturedContexts)
 	require.Nil(t, onlyEventOf(t, report).Event.ContextID)
+}
+
+func TestUser42AndDevice42AreBothCapturedWithTheirKinds(t *testing.T) {
+	t.Parallel()
+	client, server := newReadyClientAgainst(t, standardPayload())
+
+	client.BoolValue("new-checkout", false, configdirector.UserContext{ID: "42"})
+	client.BoolValue("new-checkout", false, configdirector.UserContext{ID: "42", Kind: "device"})
+
+	report := reportAfterClosing(t, client, server)
+	require.Equal(t, []capturedContext{{ID: "42", Kind: "user"}, {ID: "42", Kind: "device"}}, report.DiscreteEvents.CapturedContexts)
+	require.Len(t, eventsOf(report), 2)
+	require.Equal(t, new("user"), eventsOf(report)[0].Event.ContextKind)
+	require.Equal(t, new("device"), eventsOf(report)[1].Event.ContextKind)
+}
+
+func TestAnInvalidContextKindIsCountedOncePerEvaluationWithoutNamingTheContext(t *testing.T) {
+	t.Parallel()
+	client, server := newReadyClientAgainst(t, standardPayload())
+
+	client.StringValue("greeting", "fallback", proUserWithContextKind("Device"))
+	client.StringValue("greeting", "fallback", proUserWithContextKind("Device"))
+	client.StringValue("greeting", "fallback", proUserWithContextKind("Tenant"))
+
+	report := reportAfterClosing(t, client, server)
+	require.Len(t, report.AggregatedEvents.InvalidContext, 2)
+	requireRFC3339Millis(t, report.AggregatedEvents.InvalidContext[0].StartTime)
+	requireRFC3339Millis(t, report.AggregatedEvents.InvalidContext[0].EndTime)
+	require.Equal(t, 2, report.AggregatedEvents.InvalidContext[0].Count)
+	require.Equal(t, invalidContextEvent{Reason: "invalid-context-kind", KindSample: new("Device")}, report.AggregatedEvents.InvalidContext[0].Event)
+	require.Equal(t, 1, report.AggregatedEvents.InvalidContext[1].Count)
+	require.Equal(t, invalidContextEvent{Reason: "invalid-context-kind", KindSample: new("Tenant")}, report.AggregatedEvents.InvalidContext[1].Event)
+	require.Empty(t, report.DiscreteEvents.CapturedContexts)
+	require.Nil(t, onlyEventOf(t, report).Event.ContextID)
+	require.Nil(t, onlyEventOf(t, report).Event.ContextKind)
+}
+
+func TestAWatchFiringWithAnInvalidContextKindCountsAnInvalidSubmission(t *testing.T) {
+	t.Parallel()
+	client, server := newReadyClientAgainst(t, standardPayload())
+	fired := newRecorder[string]()
+	client.WatchString("greeting", "fallback", proUserWithContextKind("Device"), fired.record)
+
+	server.send(deltaPayload(textConfig("greeting", "Bonjour")).json())
+	require.Equal(t, "Bonjour", fired.next(t))
+
+	report := reportAfterClosing(t, client, server)
+	require.Len(t, report.AggregatedEvents.InvalidContext, 1)
+	require.Equal(t, 1, report.AggregatedEvents.InvalidContext[0].Count)
+}
+
+func TestAllConfigsWithAnInvalidContextKindCountsOnceInAReportHoldingNothingElse(t *testing.T) {
+	t.Parallel()
+	client, server := newReadyClientAgainst(t, standardPayload())
+
+	client.AllConfigs(proUserWithContextKind("Device"))
+
+	report := reportAfterClosing(t, client, server)
+	require.Len(t, report.AggregatedEvents.InvalidContext, 1)
+	require.Equal(t, 1, report.AggregatedEvents.InvalidContext[0].Count)
+	require.Empty(t, eventsOf(report))
+	require.Empty(t, report.DiscreteEvents.CapturedContexts)
+}
+
+func TestInvalidContextKindsBeyondTwentySamplesAreCountedInOneEntryWithoutASample(t *testing.T) {
+	t.Parallel()
+	client, server := newReadyClientAgainst(t, standardPayload())
+
+	for index := range 22 {
+		client.BoolValue("new-checkout", false, configdirector.UserContext{ID: "42", Kind: "Kind-" + string(rune('A'+index))})
+	}
+	client.BoolValue("new-checkout", false, configdirector.UserContext{ID: "42", Kind: "Kind-V"})
+
+	entries := reportAfterClosing(t, client, server).AggregatedEvents.InvalidContext
+	require.Len(t, entries, 21)
+	require.Equal(t, new("Kind-A"), entries[0].Event.KindSample)
+	require.Equal(t, new("Kind-T"), entries[19].Event.KindSample)
+	require.Equal(t, invalidContextEvent{Reason: "invalid-context-kind"}, entries[20].Event)
+	require.Equal(t, 3, entries[20].Count)
+}
+
+func TestAContextKindSampleIsTheKindCutTo128Characters(t *testing.T) {
+	t.Parallel()
+	client, server := newReadyClientAgainst(t, standardPayload())
+
+	client.BoolValue("new-checkout", false, configdirector.UserContext{ID: "42", Kind: strings.Repeat("É", 130)})
+
+	entries := reportAfterClosing(t, client, server).AggregatedEvents.InvalidContext
+	require.Equal(t, new(strings.Repeat("É", 128)), entries[0].Event.KindSample)
 }
 
 func TestFillingTheEvaluationQueuePastItsShareDropsTheOldestAndCountsThem(t *testing.T) {
@@ -508,6 +614,28 @@ func TestAFatalStatusStopsTelemetryForGoodWithOneErrorLog(t *testing.T) {
 
 	expectNoTelemetry(t, server, 200*time.Millisecond)
 	require.Len(t, recordsAt(slog.LevelError, records()), 1)
+}
+
+func TestInvalidSubmissionsAfterATelemetryRefusalAreNotSentAndEachContextKindIsLoggedOnce(t *testing.T) {
+	t.Parallel()
+	server := startSDKServer(t, standardPayload().json())
+	server.answerTelemetryWith(http.StatusUnauthorized)
+	logger, records := newLogger()
+	options := server.options()
+	options.Logger = logger
+	client := newClient(t, options)
+	waitForReady(t, client)
+
+	client.BoolValue("new-checkout", false, noUser)
+	awaitFor(t, server.telemetryRequests, firstScheduledFlushTimeout)
+	require.Eventually(t, func() bool { return len(recordsAt(slog.LevelError, records())) == 1 }, awaitTimeout, 10*time.Millisecond)
+	client.BoolValue("new-checkout", false, proUserWithContextKind("Device"))
+	client.BoolValue("new-checkout", false, proUserWithContextKind("Device"))
+	client.BoolValue("new-checkout", false, proUserWithContextKind("Tenant"))
+	require.NoError(t, client.Close())
+
+	expectNoTelemetry(t, server, 200*time.Millisecond)
+	require.Len(t, recordsAt(slog.LevelError, records()), 3)
 }
 
 func TestAServerErrorIsLoggedAsAWarningAndTelemetryContinues(t *testing.T) {

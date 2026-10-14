@@ -168,6 +168,20 @@ func TestEveryContextReceivesTheSameValue(t *testing.T) {
 	require.Equal(t, "Hello", client.StringValue("greeting", "fallback", configdirector.UserContext{ID: "other", Anonymous: true}))
 }
 
+func TestEveryReadWithAnInvalidContextKindIsLoggedAndServedTheValue(t *testing.T) {
+	t.Parallel()
+	logger, records := newLogger()
+	testClient := newTestClient(t, map[string]any{"new-checkout": true}, configdirectortest.WithLogger(logger))
+	invalidKind := configdirector.UserContext{ID: "user-123", Kind: "Device"}
+
+	first := testClient.Client().BoolValue("new-checkout", false, invalidKind)
+	second := testClient.Client().BoolValue("new-checkout", false, invalidKind)
+
+	require.True(t, first)
+	require.True(t, second)
+	require.Len(t, recordsAt(slog.LevelError, records()), 2)
+}
+
 func TestAServedValueReportsAFoundMatch(t *testing.T) {
 	t.Parallel()
 	client := newTestClient(t, map[string]any{"new-checkout": true}).Client()

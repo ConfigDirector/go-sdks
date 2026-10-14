@@ -3,11 +3,13 @@ package configdirector
 import (
 	"reflect"
 
+	"github.com/ConfigDirector/go-sdks/configdirector/internal/evaluation"
 	"github.com/ConfigDirector/go-sdks/configdirector/internal/telemetry"
 )
 
 type telemetryCollector interface {
-	Record(evaluation telemetry.Evaluation, context telemetry.Context)
+	Record(evaluated telemetry.Evaluation, context telemetry.Context)
+	RecordInvalidContext(contextKindSample string) telemetry.InvalidContextRecording
 	Close()
 }
 
@@ -57,6 +59,7 @@ func (client *Client) reportRead(read configRead, defaultValue telemetry.Value, 
 func telemetryContextOf(userContext UserContext) telemetry.Context {
 	return telemetry.Context{
 		ID:        userContext.ID,
+		Kind:      evaluation.EffectiveContextKindOf(userContext.Kind),
 		Name:      userContext.Name,
 		Traits:    userContext.Traits,
 		Anonymous: userContext.Anonymous,

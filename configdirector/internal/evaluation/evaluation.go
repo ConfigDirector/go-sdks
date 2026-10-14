@@ -141,7 +141,7 @@ func (rule Rule) conditionsHold(context Context, segments Segments) bool {
 }
 
 func (rule Rule) serveFromBucket(configID string, context Context) (ServedValue, bool) {
-	bucket, found := bucketFor(rule.Percentages, assignedPercentage(configID, context.Identifier))
+	bucket, found := bucketFor(rule.Percentages, assignedPercentage(configID, context))
 	if !found {
 		return ServedValue{}, false
 	}

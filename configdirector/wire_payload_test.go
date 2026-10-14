@@ -144,7 +144,7 @@ func traitCondition(pointer string, operator string, targetType string, target s
 	return attributeCondition("traits", pointer, operator, targetType, target)
 }
 
-func attributeCondition(attribute string, trait any, operator string, targetType string, target string) map[string]any {
+func attributeCondition(attribute string, trait any, operator string, targetType string, targets ...string) map[string]any {
 	return map[string]any{
 		"id":           "condition-" + attribute,
 		"kind":         "attribute",
@@ -152,8 +152,34 @@ func attributeCondition(attribute string, trait any, operator string, targetType
 		"trait":        trait,
 		"operator":     operator,
 		"targetType":   targetType,
-		"targetValues": []string{target},
+		"targetValues": targets,
 	}
+}
+
+func contextKindIsOneOf(contextKinds ...string) map[string]any {
+	return attributeCondition("kind", nil, "is one of", "text", contextKinds...)
+}
+
+func evenSplitConfig(key string) map[string]any {
+	rolledOut := configOf(key, "string", "NONE", percentageRule(key+"-split", bucket("b0", 50, "0"), bucket("b1", 50, "1")))
+	return withField(rolledOut, "id", "11111111-1111-4111-8111-111111111111")
+}
+
+func percentageRule(id string, buckets ...map[string]any) map[string]any {
+	return map[string]any{
+		"id":          id,
+		"order":       0,
+		"type":        "percentage",
+		"target":      "percentage",
+		"value":       nil,
+		"valueId":     nil,
+		"conditions":  []map[string]any{},
+		"percentages": buckets,
+	}
+}
+
+func bucket(id string, percentage float64, value string) map[string]any {
+	return map[string]any{"id": id, "percentage": percentage, "value": value, "valueId": "value-" + id}
 }
 
 func inSegment(segmentID string) map[string]any {

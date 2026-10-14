@@ -298,9 +298,10 @@ func (client *Client) JSONValueDetails(key string, target any, userContext UserC
 
 // AllConfigs returns the evaluated state of every config the client holds, or of the configs
 // with the given keys, sorted by key. Intended for handing state to a client SDK to hydrate
-// with; it records no telemetry and reaches no OnConfigEvaluated handler. Empty until the client
-// is ready.
-func (client *Client) AllConfigs(userContext UserContext, keys ...string) []ConfigState {
+// with; it records no evaluation in telemetry and reaches no OnConfigEvaluated handler. Empty
+// until the client is ready.
+func (client *Client) AllConfigs(supplied UserContext, keys ...string) []ConfigState {
+	userContext := client.contextToEvaluate(supplied)
 	snapshot, ready := client.heldSnapshot()
 	if !ready {
 		return []ConfigState{}
@@ -317,8 +318,8 @@ func readValue[T any](client *Client, key string, defaultValue T, userContext Us
 	return value, evaluated.details()
 }
 
-func evaluateValueAndReport[T any](client *Client, snapshot *configSnapshot, key string, defaultValue T, userContext UserContext, valueFrom func(ConfigState) (T, EvaluationReason)) (T, Evaluation) {
-	value, read := evaluateValue(client, snapshot, key, defaultValue, userContext, valueFrom)
+func evaluateValueAndReport[T any](client *Client, snapshot *configSnapshot, key string, defaultValue T, supplied UserContext, valueFrom func(ConfigState) (T, EvaluationReason)) (T, Evaluation) {
+	value, read := evaluateValue(client, snapshot, key, defaultValue, client.contextToEvaluate(supplied), valueFrom)
 	client.reportRead(read, telemetry.ValueOf(defaultValue, read.reportsAsDocument(), ""), reflect.TypeFor[T]())
 	return value, read.evaluation
 }
@@ -336,9 +337,9 @@ func evaluateValue[T any](client *Client, snapshot *configSnapshot, key string, 
 	return value, configRead{kind: typedRead, evaluation: servedEvaluation(key, value, state.ValueID, userContext), configType: state.Type}
 }
 
-func (client *Client) evaluateJSONAndReport(snapshot *configSnapshot, key string, targetValue reflect.Value, userContext UserContext) Evaluation {
+func (client *Client) evaluateJSONAndReport(snapshot *configSnapshot, key string, targetValue reflect.Value, supplied UserContext) Evaluation {
 	defaultValue := telemetry.ValueOf(targetValue.Elem().Interface(), documentRead.reportsAsDocument(""), "")
-	read := client.evaluateJSON(snapshot, key, targetValue, userContext)
+	read := client.evaluateJSON(snapshot, key, targetValue, client.contextToEvaluate(supplied))
 	client.reportRead(read, defaultValue, targetValue.Elem().Type())
 	return read.evaluation
 }
@@ -377,6 +378,7 @@ func (client *Client) heldSnapshot() (*configSnapshot, bool) {
 func (client *Client) evaluationContextFor(userContext UserContext) evaluation.Context {
 	return evaluation.Context{
 		Identifier: userContext.ID,
+		Kind:       userContext.Kind,
 		Name:       userContext.Name,
 		Traits:     evaluation.TraitsInJSONDataModel(userContext.Traits),
 		AppName:    client.settings.metadata.AppName,

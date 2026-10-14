@@ -44,6 +44,7 @@ The OpenFeature evaluation context maps onto the ConfigDirector user context use
 | OpenFeature | ConfigDirector |
 |---|---|
 | targeting key, or failing that an `id` attribute | `ID` |
+| `kind` attribute | `Kind`, the context kind; leaving it out means `user` |
 | `name` attribute | `Name` |
 | `traits` attribute, a `map[string]any` | `Traits` |
 | `anonymous` attribute, a `bool` | `Anonymous` |
@@ -54,7 +55,12 @@ user := openfeature.NewEvaluationContext("user-123", map[string]any{
 	"traits": map[string]any{"plan": "pro"},
 })
 newCheckout := client.Boolean(ctx, "new-checkout", false, user)
+
+device := openfeature.NewEvaluationContext("device-42", map[string]any{"kind": "device"})
+offlineMode := client.Boolean(ctx, "offline-mode", false, device)
 ```
+
+A kind has 1 to 64 characters, using only lowercase letters, digits, `-` and `_`. A `kind` inside `traits` is an ordinary trait. When the kind is invalid the whole context is ignored: the evaluation still resolves successfully, to the value for no context, and the SDK logs an error.
 
 ## Evaluation details
 

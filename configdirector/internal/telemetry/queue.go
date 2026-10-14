@@ -89,27 +89,28 @@ func (batch eventBatch) aggregated() []aggregatedEvent {
 }
 
 type contextRegistry struct {
-	mutex   sync.Mutex
-	limit   int
-	byID    map[string]Context
-	order   []string
-	dropped int
+	mutex      sync.Mutex
+	limit      int
+	byIdentity map[contextIdentity]Context
+	order      []contextIdentity
+	dropped    int
 }
 
 func newContextRegistry(limit int) *contextRegistry {
-	return &contextRegistry{limit: limit, byID: map[string]Context{}}
+	return &contextRegistry{limit: limit, byIdentity: map[contextIdentity]Context{}}
 }
 
 func (registry *contextRegistry) add(context Context) {
 	registry.mutex.Lock()
 	defer registry.mutex.Unlock()
 
-	if _, held := registry.byID[context.ID]; !held {
-		registry.order = append(registry.order, context.ID)
+	identity := context.identity()
+	if _, held := registry.byIdentity[identity]; !held {
+		registry.order = append(registry.order, identity)
 	}
-	registry.byID[context.ID] = context
+	registry.byIdentity[identity] = context
 	for len(registry.order) > registry.limit {
-		delete(registry.byID, registry.order[0])
+		delete(registry.byIdentity, registry.order[0])
 		registry.order = registry.order[1:]
 		registry.dropped++
 	}
@@ -120,8 +121,8 @@ func (registry *contextRegistry) takeCaptured() (contexts []Context, dropped int
 	defer registry.mutex.Unlock()
 
 	contexts = make([]Context, 0, len(registry.order))
-	for _, id := range registry.order {
-		contexts = append(contexts, registry.byID[id])
+	for _, identity := range registry.order {
+		contexts = append(contexts, registry.byIdentity[identity])
 	}
 	dropped = registry.dropped
 	registry.resetLocked()
@@ -135,7 +136,7 @@ func (registry *contextRegistry) clear() {
 }
 
 func (registry *contextRegistry) resetLocked() {
-	registry.byID = map[string]Context{}
+	registry.byIdentity = map[contextIdentity]Context{}
 	registry.order = nil
 	registry.dropped = 0
 }

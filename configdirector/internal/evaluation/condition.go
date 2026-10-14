@@ -2,14 +2,34 @@ package evaluation
 
 import "strings"
 
-// Context is what targeting rules match on: the user a config is evaluated for and the
-// application asking.
+// Context is what targeting rules match on: the context a config is evaluated for and the
+// application asking. Kind is the context kind as supplied, already validated by the client;
+// empty means user.
 type Context struct {
 	Identifier string
+	Kind       string
 	Name       string
 	Traits     map[string]any
 	AppName    string
 	AppVersion string
+}
+
+// UserContextKind is the effective context kind of a context whose kind was omitted, and of an
+// evaluation with no context at all.
+const UserContextKind = "user"
+
+func (context Context) effectiveContextKind() string {
+	return EffectiveContextKindOf(context.Kind)
+}
+
+// EffectiveContextKindOf is the context kind targeting rules and percentage rollouts see for a
+// context whose kind is contextKind: contextKind itself when one was supplied, otherwise
+// UserContextKind.
+func EffectiveContextKindOf(contextKind string) string {
+	if contextKind == "" {
+		return UserContextKind
+	}
+	return contextKind
 }
 
 // Condition is one condition of a conditional rule. The two kinds are AttributeCondition and
@@ -72,6 +92,8 @@ func (condition AttributeCondition) attributeValue(context Context) (any, bool) 
 	switch condition.Attribute {
 	case "identifier":
 		return context.Identifier, true
+	case "kind":
+		return context.effectiveContextKind(), true
 	case "name":
 		return context.Name, true
 	case "appName":

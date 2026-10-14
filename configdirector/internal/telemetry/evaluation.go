@@ -32,8 +32,11 @@ type Evaluation struct {
 // Context is the user context a config was evaluated for. Only a context with an ID that is not
 // anonymous is captured and named on the evaluation.
 type Context struct {
-	// ID identifies the user; a context without one is not captured.
+	// ID identifies the context among those of its kind; a context without one is not captured.
 	ID string
+
+	// Kind is the context's effective kind, never empty.
+	Kind string
 
 	// Name is the user's display name.
 	Name string
@@ -50,23 +53,35 @@ func (context Context) identified() bool {
 }
 
 func (context Context) wire() wireContext {
-	return wireContext{ID: context.ID, Name: context.Name, Traits: context.Traits}
+	return wireContext{ID: context.ID, Kind: context.Kind, Name: context.Name, Traits: context.Traits}
+}
+
+func (context Context) identity() contextIdentity {
+	return contextIdentity{kind: context.Kind, id: context.ID}
+}
+
+type contextIdentity struct {
+	kind string
+	id   string
 }
 
 type wireContext struct {
 	ID     string         `json:"id"`
+	Kind   string         `json:"kind"`
 	Name   string         `json:"name,omitempty"`
 	Traits map[string]any `json:"traits,omitempty"`
 }
 
 type evaluatedConfigEvent struct {
-	contextID  string
-	evaluation Evaluation
+	contextID   string
+	contextKind string
+	evaluation  Evaluation
 }
 
 func (event evaluatedConfigEvent) wire() wireEvaluatedConfigEvent {
 	return wireEvaluatedConfigEvent{
 		ContextID:        event.contextID,
+		ContextKind:      event.contextKind,
 		Key:              event.evaluation.Key,
 		Type:             event.evaluation.ConfigType,
 		DefaultValue:     event.evaluation.DefaultValue.wire(),
@@ -80,6 +95,7 @@ func (event evaluatedConfigEvent) wire() wireEvaluatedConfigEvent {
 
 type wireEvaluatedConfigEvent struct {
 	ContextID        string    `json:"contextId,omitempty"`
+	ContextKind      string    `json:"contextKind,omitempty"`
 	Key              string    `json:"key"`
 	Type             string    `json:"type,omitempty"`
 	DefaultValue     wireValue `json:"defaultValue"`

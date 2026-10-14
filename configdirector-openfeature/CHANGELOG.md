@@ -9,6 +9,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- A `kind` attribute in the evaluation context, beside the targeting key, becomes the
+  `UserContext` kind, for example `openfeature.NewEvaluationContext("42", map[string]any{"kind":
+  "device"})`; leaving it out means `user`. A `kind` inside `traits` stays an ordinary trait. A
+  string, number or boolean `kind` is read as its text, like `id`. When the kind is invalid the
+  whole context is ignored: the evaluation still resolves successfully, to the value for no
+  context, and the SDK logs an error.
+
+### Changed
+
+- Requires `configdirector` 0.3.0 or later, which accepts a context kind.
+
 ## [0.1.1] - 2026-10-11
 
 ### Changed
