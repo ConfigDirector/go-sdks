@@ -9,7 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-10-14
+## [0.2.0] - 2026-10-15
 
 ### Added
 

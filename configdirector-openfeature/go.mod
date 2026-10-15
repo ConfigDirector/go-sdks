@@ -3,7 +3,7 @@ module github.com/ConfigDirector/go-sdks/configdirector-openfeature
 go 1.26.0
 
 require (
-	github.com/ConfigDirector/go-sdks/configdirector v0.2.1
+	github.com/ConfigDirector/go-sdks/configdirector v0.3.0
 	github.com/open-feature/go-sdk v1.19.0
 	github.com/stretchr/testify v1.12.1
 )

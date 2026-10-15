@@ -1,5 +1,5 @@
-github.com/ConfigDirector/go-sdks/configdirector v0.2.1 h1:qGSL1HcV4YMo8K3uDgnpuQI9MQqMS4Cn1N3G4QEoRXc=
-github.com/ConfigDirector/go-sdks/configdirector v0.2.1/go.mod h1:x94DDgPIZULC6jXEYjupuQyjAR3H6uq9eVfs8HNvnAw=
+github.com/ConfigDirector/go-sdks/configdirector v0.3.0 h1:oPZzkoW541gsV8O1RtL3LuRo3n+vhKhgXkDz/A13pNY=
+github.com/ConfigDirector/go-sdks/configdirector v0.3.0/go.mod h1:x94DDgPIZULC6jXEYjupuQyjAR3H6uq9eVfs8HNvnAw=
 github.com/ConfigDirector/go-sdks/configdirector-openfeature v0.1.0 h1:A7jjtRVsFwB7vsRCAYDMAc02Tt7/2YohGHmFX+8hQwI=
 github.com/ConfigDirector/go-sdks/configdirector-openfeature v0.1.0/go.mod h1:1WmxrPD4DtYfIpJcbP22SLUrf6tDhvue4lEp4VDc5ac=
 github.com/bytedance/gopkg v0.1.3 h1:TPBSwH8RsouGCBcMBktLt1AymVo2TVsBVCY4b6TnZ/M=
