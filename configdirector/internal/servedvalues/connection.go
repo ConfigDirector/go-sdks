@@ -1,4 +1,4 @@
-package configdirectortest
+package servedvalues
 
 import (
 	"io"
@@ -15,26 +15,33 @@ const (
 	connectionPhaseClosed
 )
 
-type inMemoryConnection struct {
+// Connection is an in-memory connection that serves the configs it holds and delivers every change
+// to them on the calling goroutine, one update at a time, in the order the changes were made.
+type Connection struct {
 	receiver connectionseam.Receiver
 
 	mutex   sync.Mutex
-	configs map[string]servedConfig
+	configs map[string]Config
 	phase   connectionPhase
 
 	deliveries deliveryQueue
 }
 
-func newInMemoryConnection(configs map[string]servedConfig) *inMemoryConnection {
-	return &inMemoryConnection{configs: configs}
+// NewConnection creates a connection holding configs, which it delivers as the client's first
+// update when CompleteInitialization is called.
+func NewConnection(configs map[string]Config) *Connection {
+	return &Connection{configs: configs}
 }
 
-func (connection *inMemoryConnection) open(receiver connectionseam.Receiver) io.Closer {
+// Open attaches the connection to the client receiving its documents. It is a
+// connectionseam.OpenConnection.
+func (connection *Connection) Open(receiver connectionseam.Receiver) io.Closer {
 	connection.receiver = receiver
 	return connection
 }
 
-func (connection *inMemoryConnection) Close() error {
+// Close stops every later delivery.
+func (connection *Connection) Close() error {
 	connection.mutex.Lock()
 	defer connection.mutex.Unlock()
 	connection.phase = connectionPhaseClosed
@@ -48,8 +55,11 @@ type updateDecision struct {
 
 var noUpdate = updateDecision{}
 
-func (connection *inMemoryConnection) setValue(key string, value any) error {
-	config, err := servedConfigFrom(key, value)
+// SetValue stores value under key and, once the first update was delivered, delivers it as an
+// update carrying only that key. A value that cannot be served returns an error and nothing
+// changes.
+func (connection *Connection) SetValue(key string, value any) error {
+	config, err := configFrom(key, value)
 	if err != nil {
 		return err
 	}
@@ -60,15 +70,20 @@ func (connection *inMemoryConnection) setValue(key string, value any) error {
 	return nil
 }
 
-func (connection *inMemoryConnection) removeValue(key string) {
+// RemoveValue removes key and, once the first update was delivered, delivers a full update
+// without it.
+func (connection *Connection) RemoveValue(key string) {
 	connection.deliverUpdate(func() updateDecision {
 		delete(connection.configs, key)
 		return connection.updateWhenConnected(fullDocument(connection.configs))
 	})
 }
 
-func (connection *inMemoryConnection) replaceValues(values map[string]any) error {
-	configs, err := servedConfigsFrom(values)
+// ReplaceValues replaces every stored value with values and, once the first update was
+// delivered, delivers them as a full update. A value that cannot be served returns an error and
+// nothing changes.
+func (connection *Connection) ReplaceValues(values map[string]any) error {
+	configs, err := ConfigsFrom(values)
 	if err != nil {
 		return err
 	}
@@ -79,7 +94,9 @@ func (connection *inMemoryConnection) replaceValues(values map[string]any) error
 	return nil
 }
 
-func (connection *inMemoryConnection) completeInitialization() {
+// CompleteInitialization delivers the stored configs as the client's first update. On a
+// connection that delivered it already, or is closed, it does nothing.
+func (connection *Connection) CompleteInitialization() {
 	connection.deliverUpdate(func() updateDecision {
 		if connection.phase != connectionPhaseInitializing {
 			return noUpdate
@@ -89,7 +106,9 @@ func (connection *inMemoryConnection) completeInitialization() {
 	})
 }
 
-func (connection *inMemoryConnection) failInitialization() {
+// FailInitialization logs, at error level, that the first update is not coming yet. On a
+// connection that delivered it already, or is closed, it does nothing.
+func (connection *Connection) FailInitialization() {
 	connection.mutex.Lock()
 	fails := connection.phase == connectionPhaseInitializing
 	connection.mutex.Unlock()
@@ -99,14 +118,14 @@ func (connection *inMemoryConnection) failInitialization() {
 	}
 }
 
-func (connection *inMemoryConnection) updateWhenConnected(document string) updateDecision {
+func (connection *Connection) updateWhenConnected(document string) updateDecision {
 	if connection.phase != connectionPhaseConnected {
 		return noUpdate
 	}
 	return updateDecision{document: document, delivers: true}
 }
 
-func (connection *inMemoryConnection) deliverUpdate(decide func() updateDecision) {
+func (connection *Connection) deliverUpdate(decide func() updateDecision) {
 	connection.mutex.Lock()
 	decision := decide()
 	connection.mutex.Unlock()
@@ -116,7 +135,7 @@ func (connection *inMemoryConnection) deliverUpdate(decide func() updateDecision
 	}
 }
 
-func (connection *inMemoryConnection) deliver(document string) {
+func (connection *Connection) deliver(document string) {
 	for next, delivers := connection.deliveries.enqueue(document); delivers; next, delivers = connection.deliveries.dequeue() {
 		connection.receiver.Deliver(next)
 	}

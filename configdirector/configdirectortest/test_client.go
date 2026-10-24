@@ -30,6 +30,7 @@ import (
 
 	"github.com/ConfigDirector/go-sdks/configdirector"
 	"github.com/ConfigDirector/go-sdks/configdirector/internal/connectionseam"
+	"github.com/ConfigDirector/go-sdks/configdirector/internal/servedvalues"
 )
 
 const testClientSDKKey = "test-client"
@@ -40,7 +41,7 @@ var newClientOverConnection = connectionseam.NewClientOverConnection.(func(confi
 // Build one with NewTestClient. The client under Client is the SDK's production client; the
 // methods on TestClient change what it is served.
 type TestClient struct {
-	connection *inMemoryConnection
+	connection *servedvalues.Connection
 	client     *configdirector.Client
 }
 
@@ -86,7 +87,7 @@ func HoldInitialization() Option {
 // served or an option is invalid, as these are mistakes in the test rather than conditions it
 // can meet.
 func NewTestClient(values map[string]any, options ...Option) *TestClient {
-	configs, err := servedConfigsFrom(values)
+	configs, err := servedvalues.ConfigsFrom(values)
 	if err != nil {
 		panic(err)
 	}
@@ -95,13 +96,13 @@ func NewTestClient(values map[string]any, options ...Option) *TestClient {
 		option(&settings)
 	}
 
-	connection := newInMemoryConnection(configs)
-	client, err := newClientOverConnection(settings.options, connection.open)
+	connection := servedvalues.NewConnection(configs)
+	client, err := newClientOverConnection(settings.options, connection.Open)
 	if err != nil {
 		panic(err)
 	}
 	if !settings.holdInitialization {
-		connection.completeInitialization()
+		connection.CompleteInitialization()
 	}
 	return &TestClient{connection: connection, client: client}
 }
@@ -123,7 +124,7 @@ func (testClient *TestClient) Client() *configdirector.Client {
 // a blank key, a non-finite number, a value that does not encode as JSON, or a value of any other
 // kind returns an error, and nothing changes.
 func (testClient *TestClient) SetValue(key string, value any) error {
-	return testClient.connection.setValue(key, value)
+	return testClient.connection.SetValue(key, value)
 }
 
 // RemoveValue removes key and, once the client has received its first update, delivers a full
@@ -132,14 +133,14 @@ func (testClient *TestClient) SetValue(key string, value any) error {
 // RemovedKeys, all before RemoveValue returns. As every full update does, it also fires the
 // watches of every remaining key.
 func (testClient *TestClient) RemoveValue(key string) {
-	testClient.connection.removeValue(key)
+	testClient.connection.RemoveValue(key)
 }
 
 // ReplaceValues replaces every stored value with values and, once the client has received its
 // first update, delivers them as a full update. Use it to reset a test client shared across
 // tests. A value ReplaceValues cannot serve returns the error SetValue would, and nothing changes.
 func (testClient *TestClient) ReplaceValues(values map[string]any) error {
-	return testClient.connection.replaceValues(values)
+	return testClient.connection.ReplaceValues(values)
 }
 
 // CompleteInitialization delivers the stored values to a client built with HoldInitialization, on
@@ -147,7 +148,7 @@ func (testClient *TestClient) ReplaceValues(values map[string]any) error {
 // blocked WaitForReady returns, before CompleteInitialization returns. On a client that is ready
 // or closed it does nothing.
 func (testClient *TestClient) CompleteInitialization() {
-	testClient.connection.completeInitialization()
+	testClient.connection.CompleteInitialization()
 }
 
 // FailInitialization fails the held initialization the way a refused SDK key does in production:
@@ -156,7 +157,7 @@ func (testClient *TestClient) CompleteInitialization() {
 // its timeout or its context. CompleteInitialization still delivers the stored values afterwards.
 // On a client that is ready or closed it does nothing.
 func (testClient *TestClient) FailInitialization() {
-	testClient.connection.failInitialization()
+	testClient.connection.FailInitialization()
 }
 
 // Close closes the client. After Close, reads return their in-code default value, every handler
