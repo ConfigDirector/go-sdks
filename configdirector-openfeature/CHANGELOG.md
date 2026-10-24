@@ -9,6 +9,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- Offline mode: created with the connection `Mode` set to `configdirector.ConnectionModeOffline`
+  and no SDK key, the provider never connects to ConfigDirector and sends nothing, serves the
+  values in `ConnectionOptions.File` or `ConnectionOptions.Values` to every evaluation context, and
+  `SetProviderAndWait` returns at once with the provider ready. `NewProvider` returns the error
+  `configdirector.NewClient` returns when those values cannot be loaded.
+
+### Changed
+
+- Requires `configdirector` 0.4.0 or later, which adds offline mode.
+
 ## [0.2.0] - 2026-10-15
 
 ### Added

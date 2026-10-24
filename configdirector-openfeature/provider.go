@@ -58,7 +58,9 @@ var (
 // NewProvider creates a provider whose ConfigDirector client is built from options, exactly as
 // configdirector.NewClient builds one, and starts connecting at once. The client reports this
 // provider's name and Version to ConfigDirector. Handlers in options.Hooks run after the
-// provider's own. It returns the error configdirector.NewClient returns for invalid options.
+// provider's own. It returns the error configdirector.NewClient returns for invalid options. In
+// configdirector.ConnectionModeOffline the provider needs no SDK key, serves the values in options
+// without connecting, and is ready as soon as OpenFeature initializes it.
 //
 // Register the provider with OpenFeature right after creating it: a config state update that
 // arrives before OpenFeature reads the provider's events waits for it, and so does the client.
