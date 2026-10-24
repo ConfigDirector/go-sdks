@@ -56,11 +56,11 @@ func offlineConfigsFromFile(path string) (map[string]servedvalues.Config, error)
 
 	values, err := valuesObjectFrom(document)
 	if err != nil {
-		return nil, fmt.Errorf("configdirector: the offline values file %q is not a JSON object with one value per config key: %w", path, err)
+		return nil, fmt.Errorf("configdirector: the offline values file %s is not a JSON object with one value per config key: %w", path, err)
 	}
 	configs, err := servedvalues.ConfigsFrom(values)
 	if err != nil {
-		return nil, fmt.Errorf("configdirector: the offline values file %q holds a value that cannot be served: %w", path, err)
+		return nil, fmt.Errorf("configdirector: the offline values file %s holds a value that cannot be served: %w", path, err)
 	}
 	return configs, nil
 }
