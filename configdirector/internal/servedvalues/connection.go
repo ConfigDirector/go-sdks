@@ -18,6 +18,7 @@ const (
 // Connection is an in-memory connection that serves the configs it holds and delivers every change
 // to them on the calling goroutine, one update at a time, in the order the changes were made.
 type Connection struct {
+	origin   Origin
 	receiver connectionseam.Receiver
 
 	mutex   sync.Mutex
@@ -27,10 +28,10 @@ type Connection struct {
 	deliveries deliveryQueue
 }
 
-// NewConnection creates a connection holding configs, which it delivers as the client's first
-// update when CompleteInitialization is called.
-func NewConnection(configs map[string]Config) *Connection {
-	return &Connection{configs: configs}
+// NewConnection creates a connection holding configs that come from origin, which it delivers as
+// the client's first update when CompleteInitialization is called.
+func NewConnection(origin Origin, configs map[string]Config) *Connection {
+	return &Connection{origin: origin, configs: configs}
 }
 
 // Open attaches the connection to the client receiving its documents. It is a
@@ -65,7 +66,7 @@ func (connection *Connection) SetValue(key string, value any) error {
 	}
 	connection.deliverUpdate(func() updateDecision {
 		connection.configs[key] = config
-		return connection.updateWhenConnected(deltaDocument(key, config))
+		return connection.updateWhenConnected(connection.origin.deltaDocument(key, config))
 	})
 	return nil
 }
@@ -75,7 +76,7 @@ func (connection *Connection) SetValue(key string, value any) error {
 func (connection *Connection) RemoveValue(key string) {
 	connection.deliverUpdate(func() updateDecision {
 		delete(connection.configs, key)
-		return connection.updateWhenConnected(fullDocument(connection.configs))
+		return connection.updateWhenConnected(connection.origin.fullDocument(connection.configs))
 	})
 }
 
@@ -89,7 +90,7 @@ func (connection *Connection) ReplaceValues(values map[string]any) error {
 	}
 	connection.deliverUpdate(func() updateDecision {
 		connection.configs = configs
-		return connection.updateWhenConnected(fullDocument(connection.configs))
+		return connection.updateWhenConnected(connection.origin.fullDocument(connection.configs))
 	})
 	return nil
 }
@@ -102,7 +103,7 @@ func (connection *Connection) CompleteInitialization() {
 			return noUpdate
 		}
 		connection.phase = connectionPhaseConnected
-		return updateDecision{document: fullDocument(connection.configs), delivers: true}
+		return updateDecision{document: connection.origin.fullDocument(connection.configs), delivers: true}
 	})
 }
 

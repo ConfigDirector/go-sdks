@@ -50,10 +50,12 @@ type Client struct {
 }
 
 // NewClient validates options, starts connecting to ConfigDirector in the background and
-// returns at once. It returns an error when the SDK key is blank, the connection URL is not
-// usable, the connection mode is unknown, or a duration or limit is out of range. Until the
-// first config state arrives every read returns its in-code default value; call WaitForReady to
-// wait for it, or attach an OnReady handler through Options.Hooks.
+// returns at once. It returns an error when the SDK key is blank outside ConnectionModeOffline,
+// the connection URL is not usable, the connection mode is unknown, a duration or limit is out
+// of range, or the offline values cannot be loaded. Until the first config state arrives every
+// read returns its in-code default value; call WaitForReady to wait for it, or attach an OnReady
+// handler through Options.Hooks. In ConnectionModeOffline the values are loaded before NewClient
+// returns and the client is ready at once.
 func NewClient(options Options) (*Client, error) {
 	return newClientIdentifiedAs(ownIdentity, options)
 }

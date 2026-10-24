@@ -6,6 +6,7 @@ import (
 
 	"github.com/ConfigDirector/go-sdks/configdirector/internal/connectionseam"
 	"github.com/ConfigDirector/go-sdks/configdirector/internal/identityseam"
+	"github.com/ConfigDirector/go-sdks/configdirector/internal/servedvalues"
 	"github.com/ConfigDirector/go-sdks/configdirector/internal/telemetry"
 	"github.com/ConfigDirector/go-sdks/configdirector/internal/transport"
 )
@@ -25,9 +26,24 @@ func newClientIdentifiedAs(identity identityseam.Identity, options Options) (*Cl
 		return nil, err
 	}
 	settings.identity = identity
-	return newClient(settings, options.Hooks, func(deliver func(document string)) connection {
-		return openTransport(settings, deliver)
-	}, startTelemetry(settings)), nil
+	switch settings.mode.configStateSource() {
+	case configStateFromConfigDirector:
+		return newClient(settings, options.Hooks, func(deliver func(document string)) connection {
+			return openTransport(settings, deliver)
+		}, startTelemetry(settings)), nil
+	case configStateFromOfflineValues:
+		return newClientServingOfflineValues(settings, options.Hooks), nil
+	}
+	panic(fmt.Sprintf("configdirector: the connection mode %q passed validation without a client", settings.mode))
+}
+
+func newClientServingOfflineValues(settings clientSettings, hooks Hooks) *Client {
+	offlineConnection := servedvalues.NewConnection(servedvalues.OfflineValues, settings.offlineConfigs)
+	client := newClient(settings, hooks, func(deliver func(document string)) connection {
+		return offlineConnection.Open(connectionseam.Receiver{Deliver: deliver, Logger: settings.logger})
+	}, telemetry.Discarding{})
+	offlineConnection.CompleteInitialization()
+	return client
 }
 
 func newClientOverConnection(options Options, open connectionseam.OpenConnection) (*Client, error) {
@@ -62,6 +78,8 @@ func openTransport(settings clientSettings, deliver func(document string)) conne
 		return transport.OpenStreaming(options, deliver)
 	case ConnectionModePolling:
 		return transport.OpenPolling(options, settings.pollingInterval, deliver)
+	case ConnectionModeOffline:
+		panic("configdirector: a client in offline mode has no transport to open")
 	}
 	panic(fmt.Sprintf("configdirector: the connection mode %q passed validation without a transport", settings.mode))
 }

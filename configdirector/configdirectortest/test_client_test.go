@@ -508,7 +508,8 @@ func TestANilValueIsRejected(t *testing.T) {
 
 	err := testClient.SetValue("new-checkout", nil)
 
-	require.ErrorContains(t, err, "RemoveValue")
+	require.ErrorContains(t, err, `"new-checkout"`)
+	require.ErrorContains(t, err, "nil")
 }
 
 func TestABlankKeyIsRejected(t *testing.T) {
@@ -554,7 +555,7 @@ func TestReplaceValuesWithAnInvalidValueChangesNothing(t *testing.T) {
 func TestNewTestClientPanicsOnAnInvalidValue(t *testing.T) {
 	t.Parallel()
 
-	require.PanicsWithError(t, `configdirectortest: the value for "new-checkout" is nil, which is not a value; use RemoveValue to remove a value`, func() {
+	require.PanicsWithError(t, `configdirector: the value for "new-checkout" is nil, which is not a value; a config holds no null`, func() {
 		configdirectortest.NewTestClient(map[string]any{"new-checkout": nil})
 	})
 }

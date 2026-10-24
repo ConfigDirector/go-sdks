@@ -96,7 +96,7 @@ func NewTestClient(values map[string]any, options ...Option) *TestClient {
 		option(&settings)
 	}
 
-	connection := servedvalues.NewConnection(configs)
+	connection := servedvalues.NewConnection(servedvalues.TestValues, configs)
 	client, err := newClientOverConnection(settings.options, connection.Open)
 	if err != nil {
 		panic(err)

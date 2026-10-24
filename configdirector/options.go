@@ -10,13 +10,15 @@ import (
 	"time"
 
 	"github.com/ConfigDirector/go-sdks/configdirector/internal/identityseam"
+	"github.com/ConfigDirector/go-sdks/configdirector/internal/servedvalues"
 )
 
-// Options configures a Client. Every field except SDKKey is optional: a zero value stands for
-// the default described on the field.
+// Options configures a Client. Every field is optional, a zero value standing for the default
+// described on the field, except SDKKey, which is required unless Connection.Mode is
+// ConnectionModeOffline.
 type Options struct {
 	// SDKKey is your ConfigDirector server SDK key. It is a secret: read it from the environment
-	// rather than committing it to source control.
+	// rather than committing it to source control. Not needed in ConnectionModeOffline.
 	SDKKey string
 
 	// Metadata describes the calling application. Supplying it lets targeting rules reference the
@@ -58,6 +60,13 @@ const (
 	// ConnectionModePolling retrieves config state once when connecting and then again every
 	// polling interval.
 	ConnectionModePolling ConnectionMode = "polling"
+
+	// ConnectionModeOffline never connects to ConfigDirector: the client serves the values in
+	// ConnectionOptions.File or ConnectionOptions.Values to every context, is ready as soon as
+	// NewClient returns, and sends no telemetry, so the application is invisible to the
+	// ConfigDirector dashboard. With neither File nor Values, every read returns its in-code
+	// default value. No SDK key is needed.
+	ConnectionModeOffline ConnectionMode = "offline"
 )
 
 // ConnectionOptions controls how a client connects to ConfigDirector.
@@ -65,20 +74,39 @@ type ConnectionOptions struct {
 	// Mode is the connection mode. Defaults to ConnectionModeStreaming.
 	Mode ConnectionMode
 
+	// File is the path of a JSON file holding the values to serve in ConnectionModeOffline,
+	// resolved against the working directory: one JSON object with one value per config key.
+	// Each value's config type follows from the value: true or false is a boolean, a number
+	// without a fractional part is an integer, any other number is a float, a string is a string,
+	// and an object or an array is a JSON config. NewClient returns an error when the file is
+	// missing, cannot be read, is not a JSON object or holds a null, when Values is given too,
+	// or when File is given in another mode.
+	File string
+
+	// Values holds the values to serve in ConnectionModeOffline, keyed by config key, typed by
+	// the Go value exactly as configdirectortest.TestClient.SetValue types them: a bool, a
+	// string, any integer kind, a float32 or float64, or a map, slice, array or struct that
+	// encodes as JSON. NewClient returns an error for a nil value, a value of any other kind,
+	// when File is given too, or when Values is given in another mode.
+	Values map[string]any
+
 	// PollingInterval is how long the client waits between polls in polling mode. Defaults to 5
 	// minutes. The minimum is 1 minute: a shorter interval is raised to the minimum and a warning
-	// is logged. Ignored in streaming mode.
+	// is logged. Ignored in every other mode.
 	PollingInterval time.Duration
 
 	// Timeout bounds how long Client.WaitForReady waits for the first config state. Defaults to
-	// 3 seconds. The client keeps connecting after the timeout elapses.
+	// 3 seconds. The client keeps connecting after the timeout elapses. Ignored in
+	// ConnectionModeOffline.
 	Timeout time.Duration
 
 	// URL is the base URL of the ConfigDirector SDK server. Only needed when routing through a
-	// proxy. Defaults to https://server-sdk-api.configdirector.com.
+	// proxy. Defaults to https://server-sdk-api.configdirector.com. Ignored in
+	// ConnectionModeOffline.
 	URL string
 
-	// HTTPClient makes every request the client sends. Defaults to http.DefaultClient.
+	// HTTPClient makes every request the client sends. Defaults to http.DefaultClient. Ignored
+	// in ConnectionModeOffline.
 	HTTPClient *http.Client
 }
 
@@ -113,6 +141,7 @@ type clientSettings struct {
 	sdkKey          string
 	metadata        Metadata
 	mode            ConnectionMode
+	offlineConfigs  map[string]servedvalues.Config
 	pollingInterval time.Duration
 	timeout         time.Duration
 	baseURL         string
@@ -123,18 +152,7 @@ type clientSettings struct {
 }
 
 func settingsFrom(options Options) (clientSettings, error) {
-	if strings.TrimSpace(options.SDKKey) == "" {
-		return clientSettings{}, errors.New("configdirector: the SDK key is blank; a client needs a server SDK key")
-	}
-
 	mode, err := connectionModeFrom(options.Connection.Mode)
-	if err != nil {
-		return clientSettings{}, err
-	}
-	if options.Connection.Timeout < 0 {
-		return clientSettings{}, fmt.Errorf("configdirector: the connection timeout %s is negative; it must be a positive duration", options.Connection.Timeout)
-	}
-	baseURL, err := baseURLFrom(options.Connection.URL)
 	if err != nil {
 		return clientSettings{}, err
 	}
@@ -152,28 +170,64 @@ func settingsFrom(options Options) (clientSettings, error) {
 	}
 	logger = logger.With(slog.String("component", loggerComponentAttribute))
 
-	pollingInterval := pollingIntervalFor(mode, options.Connection.PollingInterval)
+	settings := clientSettings{
+		identity:        ownIdentity,
+		metadata:        options.Metadata,
+		mode:            mode,
+		eventQueueLimit: eventQueueLimit,
+		flushInterval:   durationOrDefault(options.Telemetry.FlushInterval, defaultFlushInterval),
+		logger:          logger,
+	}
+	switch mode.configStateSource() {
+	case configStateFromConfigDirector:
+		return settings.connectingToConfigDirectorWith(options)
+	case configStateFromOfflineValues:
+		return settings.servingOfflineValuesFrom(options.Connection)
+	}
+	panic(fmt.Sprintf("configdirector: the connection mode %q passed validation without a config state source", mode))
+}
+
+func (settings clientSettings) connectingToConfigDirectorWith(options Options) (clientSettings, error) {
+	if strings.TrimSpace(options.SDKKey) == "" {
+		return clientSettings{}, errors.New("configdirector: the SDK key is blank; a client needs a server SDK key")
+	}
+	switch offlineSourceOf(options.Connection) {
+	case offlineSourceNone:
+	case offlineSourceFile, offlineSourceInlineValues, offlineSourceFileAndValuesTogether:
+		return clientSettings{}, fmt.Errorf("configdirector: the connection mode is %q but File or Values is given; offline values are served in ConnectionModeOffline only", settings.mode)
+	}
+	if options.Connection.Timeout < 0 {
+		return clientSettings{}, fmt.Errorf("configdirector: the connection timeout %s is negative; it must be a positive duration", options.Connection.Timeout)
+	}
+	baseURL, err := baseURLFrom(options.Connection.URL)
+	if err != nil {
+		return clientSettings{}, err
+	}
+
+	pollingInterval := pollingIntervalFor(settings.mode, options.Connection.PollingInterval)
 	if pollingInterval.raisedToMinimum {
-		logger.Warn(
+		settings.logger.Warn(
 			"The polling interval is below the minimum, the minimum is used instead",
 			slog.Duration("configured", options.Connection.PollingInterval),
 			slog.Duration("used", pollingInterval.interval),
 		)
 	}
 
-	return clientSettings{
-		identity:        ownIdentity,
-		sdkKey:          options.SDKKey,
-		metadata:        options.Metadata,
-		mode:            mode,
-		pollingInterval: pollingInterval.interval,
-		timeout:         durationOrDefault(options.Connection.Timeout, defaultTimeout),
-		baseURL:         baseURL,
-		httpClient:      httpClientOrDefault(options.Connection.HTTPClient),
-		eventQueueLimit: eventQueueLimit,
-		flushInterval:   durationOrDefault(options.Telemetry.FlushInterval, defaultFlushInterval),
-		logger:          logger,
-	}, nil
+	settings.sdkKey = options.SDKKey
+	settings.pollingInterval = pollingInterval.interval
+	settings.timeout = durationOrDefault(options.Connection.Timeout, defaultTimeout)
+	settings.baseURL = baseURL
+	settings.httpClient = httpClientOrDefault(options.Connection.HTTPClient)
+	return settings, nil
+}
+
+func (settings clientSettings) servingOfflineValuesFrom(connection ConnectionOptions) (clientSettings, error) {
+	configs, err := offlineConfigsFrom(connection)
+	if err != nil {
+		return clientSettings{}, err
+	}
+	settings.offlineConfigs = configs
+	return settings, nil
 }
 
 func connectionModeFrom(configured ConnectionMode) (ConnectionMode, error) {
@@ -182,9 +236,28 @@ func connectionModeFrom(configured ConnectionMode) (ConnectionMode, error) {
 		return ConnectionModeStreaming, nil
 	case ConnectionModePolling:
 		return ConnectionModePolling, nil
+	case ConnectionModeOffline:
+		return ConnectionModeOffline, nil
 	default:
-		return "", fmt.Errorf("configdirector: unknown connection mode %q; use ConnectionModeStreaming or ConnectionModePolling", configured)
+		return "", fmt.Errorf("configdirector: unknown connection mode %q; use ConnectionModeStreaming, ConnectionModePolling or ConnectionModeOffline", configured)
 	}
+}
+
+type configStateSource int
+
+const (
+	configStateFromConfigDirector configStateSource = iota
+	configStateFromOfflineValues
+)
+
+func (mode ConnectionMode) configStateSource() configStateSource {
+	switch mode {
+	case ConnectionModeStreaming, ConnectionModePolling:
+		return configStateFromConfigDirector
+	case ConnectionModeOffline:
+		return configStateFromOfflineValues
+	}
+	panic(fmt.Sprintf("configdirector: the connection mode %q passed validation without a config state source", mode))
 }
 
 type pollingIntervalDecision struct {

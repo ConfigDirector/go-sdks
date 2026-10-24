@@ -52,10 +52,13 @@ func ConfigsFrom(values map[string]any) (map[string]Config, error) {
 
 func configFrom(key string, value any) (Config, error) {
 	if strings.TrimSpace(key) == "" {
-		return Config{}, fmt.Errorf("configdirectortest: the key %q is blank; a value needs a config key", key)
+		return Config{}, fmt.Errorf("configdirector: the key %q is blank; a value needs a config key", key)
 	}
 	if value == nil {
-		return Config{}, fmt.Errorf("configdirectortest: the value for %q is nil, which is not a value; use RemoveValue to remove a value", key)
+		return Config{}, fmt.Errorf("configdirector: the value for %q is nil, which is not a value; a config holds no null", key)
+	}
+	if number, isJSONNumber := value.(json.Number); isJSONNumber {
+		return numberConfigFrom(key, number)
 	}
 
 	reflected := reflect.ValueOf(value)
@@ -74,16 +77,30 @@ func configFrom(key string, value any) (Config, error) {
 		return jsonConfigFrom(key, value)
 	default:
 		return Config{}, fmt.Errorf(
-			"configdirectortest: the value for %q is a %T, which cannot be served; a test value is a bool, a string, an integer, a float, or a map, slice, array or struct that encodes as JSON",
+			"configdirector: the value for %q is a %T, which cannot be served; a served value is a bool, a string, an integer, a float, or a map, slice, array or struct that encodes as JSON",
 			key, value,
 		)
 	}
 }
 
+func numberConfigFrom(key string, number json.Number) (Config, error) {
+	if whole, err := number.Int64(); err == nil {
+		return Config{configType: configTypeInteger, text: strconv.FormatInt(whole, 10)}, nil
+	}
+	asFloat, err := number.Float64()
+	if err != nil {
+		return Config{}, fmt.Errorf("configdirector: the value for %q is %s, which is not a finite number", key, number)
+	}
+	if asFloat == math.Trunc(asFloat) && asFloat >= math.MinInt64 && asFloat < math.MaxInt64 {
+		return Config{configType: configTypeInteger, text: strconv.FormatInt(int64(asFloat), 10)}, nil
+	}
+	return Config{configType: configTypeFloat, text: strconv.FormatFloat(asFloat, 'f', -1, 64)}, nil
+}
+
 func floatConfigFrom(key string, reflected reflect.Value) (Config, error) {
 	number := reflected.Float()
 	if math.IsNaN(number) || math.IsInf(number, 0) {
-		return Config{}, fmt.Errorf("configdirectortest: the value for %q is %v, which is not a finite number", key, number)
+		return Config{}, fmt.Errorf("configdirector: the value for %q is %v, which is not a finite number", key, number)
 	}
 	return Config{configType: configTypeFloat, text: strconv.FormatFloat(number, 'f', -1, reflected.Type().Bits())}, nil
 }
@@ -91,7 +108,7 @@ func floatConfigFrom(key string, reflected reflect.Value) (Config, error) {
 func jsonConfigFrom(key string, value any) (Config, error) {
 	document, err := json.Marshal(value)
 	if err != nil {
-		return Config{}, fmt.Errorf("configdirectortest: the value for %q does not encode as JSON: %w", key, err)
+		return Config{}, fmt.Errorf("configdirector: the value for %q does not encode as JSON: %w", key, err)
 	}
 	return Config{configType: configTypeJSON, text: string(document)}, nil
 }
@@ -116,15 +133,44 @@ type wireTarget struct {
 	DefaultValueID string `json:"defaultValueId"`
 }
 
-func fullDocument(configs map[string]Config) string {
-	return documentOf(payloadKindFull, configs)
+// Origin is where the values a connection serves come from, which decides the config and value
+// identifiers the client reports for them.
+type Origin int
+
+const (
+	// TestValues are the values a configdirectortest.TestClient serves: config test-config:<key>
+	// with value test-value:<key>.
+	TestValues Origin = iota
+
+	// OfflineValues are the values a client in offline mode serves: config offline:<key> with no
+	// value identifier.
+	OfflineValues
+)
+
+type identifiers struct {
+	configID string
+	valueID  string
 }
 
-func deltaDocument(key string, config Config) string {
-	return documentOf(payloadKindDelta, map[string]Config{key: config})
+func (origin Origin) identifiersOf(key string) identifiers {
+	switch origin {
+	case TestValues:
+		return identifiers{configID: "test-config:" + key, valueID: "test-value:" + key}
+	case OfflineValues:
+		return identifiers{configID: "offline:" + key, valueID: ""}
+	}
+	panic(fmt.Sprintf("servedvalues: the origin %d has no identifiers", origin))
 }
 
-func documentOf(kind payloadKind, configs map[string]Config) string {
+func (origin Origin) fullDocument(configs map[string]Config) string {
+	return origin.documentOf(payloadKindFull, configs)
+}
+
+func (origin Origin) deltaDocument(key string, config Config) string {
+	return origin.documentOf(payloadKindDelta, map[string]Config{key: config})
+}
+
+func (origin Origin) documentOf(kind payloadKind, configs map[string]Config) string {
 	payload := wirePayload{
 		PayloadVersion: payloadVersion,
 		Kind:           kind,
@@ -132,20 +178,21 @@ func documentOf(kind payloadKind, configs map[string]Config) string {
 		Segments:       map[string]any{},
 	}
 	for key, config := range configs {
+		identifiers := origin.identifiersOf(key)
 		payload.Configs[key] = wireConfig{
-			ID:   "test-config:" + key,
+			ID:   identifiers.configID,
 			Key:  key,
 			Type: config.configType,
 			Target: wireTarget{
 				Rules:          []any{},
 				DefaultValue:   config.text,
-				DefaultValueID: "test-value:" + key,
+				DefaultValueID: identifiers.valueID,
 			},
 		}
 	}
 	document, err := json.Marshal(payload)
 	if err != nil {
-		panic(fmt.Sprintf("configdirectortest: the payload cannot be encoded: %v", err))
+		panic(fmt.Sprintf("servedvalues: the payload cannot be encoded: %v", err))
 	}
 	return string(document)
 }

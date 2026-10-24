@@ -9,6 +9,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- `ConnectionModeOffline`, a connection mode in which the client never connects to ConfigDirector
+  and serves the values in `ConnectionOptions.File`, the path of a JSON file with one value per
+  config key, or `ConnectionOptions.Values`, a `map[string]any`, to every context. The values are
+  typed as `configdirectortest.TestClient.SetValue` types them, the client is ready when `NewClient`
+  returns, nothing is sent, and no SDK key is needed. With neither `File` nor `Values`, every read
+  returns its in-code default value. `NewClient` returns an error when the file is missing, cannot
+  be read, is not a JSON object or holds a `null`, when an inline value is `nil` or of a kind that
+  cannot be served, when `File` and `Values` are both given, or when either is given in streaming
+  or polling mode. In offline mode `PollingInterval`, `Timeout`, `URL` and `HTTPClient` are ignored.
+
+### Changed
+
+- The errors `configdirectortest.TestClient.SetValue` and `ReplaceValues` return for a value that
+  cannot be served, and the panic of `NewTestClient`, now start with `configdirector:` instead of
+  `configdirectortest:`, and the message for a `nil` value no longer suggests `RemoveValue`, since
+  the same rule now refuses a `null` in an offline values file.
+- A blank SDK key is reported after an unknown connection mode, not before it, when both are wrong.
+
 ## [0.3.0] - 2026-10-14
 
 ### Added
