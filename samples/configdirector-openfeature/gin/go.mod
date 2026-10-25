@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/ConfigDirector/go-sdks/configdirector v0.4.0
-	github.com/ConfigDirector/go-sdks/configdirector-openfeature v0.2.0
+	github.com/ConfigDirector/go-sdks/configdirector-openfeature v0.3.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/joho/godotenv v1.5.1
 	github.com/open-feature/go-sdk v1.19.0
