@@ -72,7 +72,7 @@ A kind has 1 to 64 characters, using only lowercase letters, digits, `-` and `_`
 | The value does not match the requested type | `ERROR` | `TYPE_MISMATCH` |
 | No config state has been received yet | `ERROR` | `PROVIDER_NOT_READY` |
 
-An object evaluation decodes the config's JSON document the way `encoding/json` decodes into an `any`: an object is a `map[string]any`, an array a `[]any`, a number a `float64`.
+An object evaluation decodes the config's JSON document the way `encoding/json` decodes into an `any`: an object is a `map[string]any`, an array a `[]any`, a number a `float64`. When the default is a map or a struct, only a JSON object is served, and when it is a slice or an array, only a JSON array; any other document resolves to the default with `TYPE_MISMATCH`.
 
 If the first config state does not arrive within the connection timeout, initialization still completes and evaluations return their defaults. The provider keeps connecting, and emits `PROVIDER_READY` once config state arrives. It emits `PROVIDER_CONFIGURATION_CHANGED` whenever configs are updated, with the keys the update carried followed by the keys that were removed.
 

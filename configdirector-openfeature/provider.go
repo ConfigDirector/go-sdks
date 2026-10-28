@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"reflect"
 	"slices"
 	"sync"
 
@@ -251,8 +252,10 @@ func (provider *Provider) IntEvaluation(_ context.Context, flag string, defaultV
 }
 
 // ObjectEvaluation evaluates flag as a JSON document, decoded as encoding/json decodes into an
-// any: an object becomes a map[string]any, an array a []any, a number a float64. It returns
-// defaultValue as given when the flag falls back.
+// any: an object becomes a map[string]any, an array a []any, a number a float64. When
+// defaultValue is a map or a struct, only a JSON object is served, and when it is a slice or an
+// array, only a JSON array; any other document resolves to defaultValue with TYPE_MISMATCH. It
+// returns defaultValue as given when the flag falls back.
 func (provider *Provider) ObjectEvaluation(_ context.Context, flag string, defaultValue any, flattenedContext openfeature.FlattenedContext) openfeature.InterfaceResolutionDetail {
 	return documentResolutionOf(flag, defaultValue, flattenedContext, provider.client.JSONValueDetails)
 }
@@ -266,7 +269,23 @@ func documentResolutionOf(flag string, defaultValue any, flattenedContext openfe
 			ProviderResolutionDetail: resolutionErrorDetail(openfeature.NewGeneralResolutionError(err.Error())),
 		}
 	}
+	if requiredShape, missing := missingShape(value, defaultValue); !details.UsedDefault && missing {
+		return openfeature.InterfaceResolutionDetail{Value: defaultValue, ProviderResolutionDetail: typeMismatchDetail(flag, requiredShape)}
+	}
 	return openfeature.InterfaceResolutionDetail{Value: value, ProviderResolutionDetail: resolutionDetailFor(flag, details)}
+}
+
+func missingShape(document any, defaultValue any) (requiredShape string, missing bool) {
+	switch reflect.ValueOf(defaultValue).Kind() {
+	case reflect.Map, reflect.Struct:
+		_, isObject := document.(map[string]any)
+		return "a JSON object", !isObject
+	case reflect.Slice, reflect.Array:
+		_, isArray := document.([]any)
+		return "a JSON array", !isArray
+	default:
+		return "", false
+	}
 }
 
 func resolutionOf[T any](flag string, defaultValue T, flattenedContext openfeature.FlattenedContext, read func(key string, defaultValue T, userContext configdirector.UserContext) (T, configdirector.EvaluationDetails)) openfeature.GenericResolutionDetail[T] {

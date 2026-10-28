@@ -2,6 +2,7 @@ package configdirectoropenfeature
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"runtime"
 	"strings"
@@ -188,6 +189,111 @@ func TestAnObjectFlagThatIsNotADocumentResolvesToTheDefaultAsGivenAsATypeMismatc
 	require.Error(t, err)
 	require.Equal(t, map[string]any{"max": 1}, details.Value)
 	require.Equal(t, openfeature.TypeMismatchCode, details.ErrorCode)
+}
+
+func TestAnObjectFlagWhoseDocumentIsANumberResolvesToTheDefaultAsGivenAsATypeMismatch(t *testing.T) {
+	t.Parallel()
+	fixture := registeredProviderServing(t, map[string]any{"limits": json.RawMessage("42")})
+
+	details, err := fixture.client.ObjectValueDetails(t.Context(), "limits", map[string]any{"max": 1}, noContext)
+
+	require.Equal(t, map[string]any{"max": 1}, details.Value)
+	require.Error(t, err)
+	require.Equal(t, openfeature.ErrorReason, details.Reason)
+	require.Equal(t, openfeature.TypeMismatchCode, details.ErrorCode)
+	require.Contains(t, details.ErrorMessage, "limits")
+}
+
+func TestAnObjectFlagWhoseDocumentIsNullResolvesToTheDefaultAsGivenAsATypeMismatch(t *testing.T) {
+	t.Parallel()
+	fixture := registeredProviderServing(t, map[string]any{"limits": json.RawMessage("null")})
+
+	details, err := fixture.client.ObjectValueDetails(t.Context(), "limits", map[string]any{"max": 1}, noContext)
+
+	require.Equal(t, map[string]any{"max": 1}, details.Value)
+	require.Error(t, err)
+	require.Equal(t, openfeature.TypeMismatchCode, details.ErrorCode)
+}
+
+func TestAnObjectFlagWhoseDocumentIsAListResolvesToTheDefaultAsGivenAsATypeMismatch(t *testing.T) {
+	t.Parallel()
+	fixture := registeredProviderServing(t, map[string]any{"limits": json.RawMessage("[1,2]")})
+
+	details, err := fixture.client.ObjectValueDetails(t.Context(), "limits", map[string]any{"max": 1}, noContext)
+
+	require.Equal(t, map[string]any{"max": 1}, details.Value)
+	require.Error(t, err)
+	require.Equal(t, openfeature.TypeMismatchCode, details.ErrorCode)
+}
+
+func TestAnObjectFlagWithAStructDefaultResolvesToTheDefaultAsGivenWhenItsDocumentIsANumber(t *testing.T) {
+	t.Parallel()
+	type limits struct{ Max int }
+	fixture := registeredProviderServing(t, map[string]any{"limits": json.RawMessage("42")})
+
+	details, err := fixture.client.ObjectValueDetails(t.Context(), "limits", limits{Max: 1}, noContext)
+
+	require.Equal(t, limits{Max: 1}, details.Value)
+	require.Error(t, err)
+	require.Equal(t, openfeature.TypeMismatchCode, details.ErrorCode)
+}
+
+func TestAListFlagResolvesToItsDecodedDocumentWithTheValueIDAsTheVariant(t *testing.T) {
+	t.Parallel()
+	fixture := registeredProviderServing(t, map[string]any{"regions": []string{"eu", "us"}})
+
+	details, err := fixture.client.ObjectValueDetails(t.Context(), "regions", []any{"eu"}, noContext)
+
+	require.NoError(t, err)
+	require.Equal(t, []any{"eu", "us"}, details.Value)
+	require.Equal(t, openfeature.TargetingMatchReason, details.Reason)
+	require.Equal(t, "test-value:regions", details.Variant)
+}
+
+func TestAListFlagWhoseDocumentIsAnObjectResolvesToTheDefaultAsGivenAsATypeMismatch(t *testing.T) {
+	t.Parallel()
+	fixture := registeredProviderServing(t, map[string]any{"regions": map[string]any{"eu": true}})
+
+	details, err := fixture.client.ObjectValueDetails(t.Context(), "regions", []any{"eu"}, noContext)
+
+	require.Equal(t, []any{"eu"}, details.Value)
+	require.Error(t, err)
+	require.Equal(t, openfeature.ErrorReason, details.Reason)
+	require.Equal(t, openfeature.TypeMismatchCode, details.ErrorCode)
+	require.Contains(t, details.ErrorMessage, "regions")
+}
+
+func TestAListFlagWithAnArrayDefaultResolvesToTheDefaultAsGivenWhenItsDocumentIsAnObject(t *testing.T) {
+	t.Parallel()
+	fixture := registeredProviderServing(t, map[string]any{"regions": map[string]any{"eu": true}})
+
+	details, err := fixture.client.ObjectValueDetails(t.Context(), "regions", [1]string{"eu"}, noContext)
+
+	require.Equal(t, [1]string{"eu"}, details.Value)
+	require.Error(t, err)
+	require.Equal(t, openfeature.TypeMismatchCode, details.ErrorCode)
+}
+
+func TestAnObjectFlagWithANumberDefaultResolvesToWhicheverDocumentTheConfigHolds(t *testing.T) {
+	t.Parallel()
+	fixture := registeredProviderServing(t, map[string]any{"limits": json.RawMessage("42")})
+
+	details, err := fixture.client.ObjectValueDetails(t.Context(), "limits", float64(0), noContext)
+
+	require.NoError(t, err)
+	require.Equal(t, float64(42), details.Value)
+	require.Equal(t, openfeature.TargetingMatchReason, details.Reason)
+}
+
+func TestAnObjectFlagNobodyDefinedResolvesToATypedMapDefaultAsFlagNotFound(t *testing.T) {
+	t.Parallel()
+	fixture := registeredProviderServing(t, map[string]any{"greeting": "hello"})
+
+	details, err := fixture.client.ObjectValueDetails(t.Context(), "limits", map[string]int{"max": 1}, noContext)
+
+	require.Error(t, err)
+	require.Equal(t, map[string]int{"max": 1}, details.Value)
+	require.Equal(t, openfeature.FlagNotFoundCode, details.ErrorCode)
 }
 
 func TestAFlagWithoutAValueResolvesToTheDefaultWithTheDefaultReason(t *testing.T) {

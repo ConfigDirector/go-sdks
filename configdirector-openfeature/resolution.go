@@ -21,10 +21,14 @@ func resolutionDetailFor(key string, details configdirector.EvaluationDetails) o
 		configdirector.EvaluationReasonInvalidNumber,
 		configdirector.EvaluationReasonInvalidJSON,
 		configdirector.EvaluationReasonInvalidBoolean:
-		return resolutionErrorDetail(openfeature.NewTypeMismatchResolutionError(fmt.Sprintf("The value of %q does not match the requested type (%s).", key, details.Reason)))
+		return typeMismatchDetail(key, string(details.Reason))
 	default:
 		return resolutionDetailForAnUnknownReason(key, details)
 	}
+}
+
+func typeMismatchDetail(key string, explanation string) openfeature.ProviderResolutionDetail {
+	return resolutionErrorDetail(openfeature.NewTypeMismatchResolutionError(fmt.Sprintf("The value of %q does not match the requested type (%s).", key, explanation)))
 }
 
 func resolutionDetailForAnUnknownReason(key string, details configdirector.EvaluationDetails) openfeature.ProviderResolutionDetail {

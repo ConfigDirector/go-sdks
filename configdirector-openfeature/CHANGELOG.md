@@ -9,6 +9,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- An object evaluation whose in-code default value is a map or a struct now resolves to the
+  config's document only when that document is a JSON object, and one whose in-code default value
+  is a slice or an array only when it is a JSON array. Any other document, such as `42`, `"text"`,
+  `true` or `null`, resolves to the in-code default value as given with `TYPE_MISMATCH`, so error
+  hooks run. Before, it reached the application as the flag's value, a `float64(42)` or a `nil`,
+  with `TARGETING_MATCH`. With an in-code default value of any other kind, the flag still resolves
+  to whichever document the config holds.
+
 ## [0.3.0] - 2026-10-24
 
 ### Added
