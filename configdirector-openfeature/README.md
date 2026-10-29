@@ -27,13 +27,17 @@ if err != nil {
 	log.Fatal(err)
 }
 if err := openfeature.SetProviderAndWait(provider); err != nil {
-	log.Fatal(err)
+	slog.Warn("Starting on in-code default values until ConfigDirector sends config", slog.Any("cause", err))
 }
 defer openfeature.Shutdown()
 
 client := openfeature.NewClient("checkout")
 newCheckout := client.Boolean(ctx, "new-checkout", false, openfeature.EvaluationContext{})
 ```
+
+`SetProviderAndWait` waits up to the connection timeout, 3 seconds by default, for config to arrive. If none arrives in time, or ConfigDirector rejects the server SDK key, it returns an error wrapping a `*openfeature.ProviderInitError` with the error code `PROVIDER_NOT_READY`, and OpenFeature reports `ErrorState`. Evaluations then return their in-code default values with `PROVIDER_NOT_READY`. After a timeout the provider keeps connecting, and OpenFeature reports `ReadyState` once config arrives.
+
+The example above handles the error by logging it and starting on in-code default values. To start without waiting for ConfigDirector, call `openfeature.SetProvider(provider)` instead, which initializes the provider in the background.
 
 The provider takes the same `configdirector.Options` as the server SDK's `NewClient`: application metadata, connection mode, timeout and polling interval, telemetry tuning, a logger and hooks. Every type, method and option is described in the [package reference][reference].
 
@@ -74,7 +78,7 @@ A kind has 1 to 64 characters, using only lowercase letters, digits, `-` and `_`
 
 An object evaluation decodes the config's JSON document the way `encoding/json` decodes into an `any`: an object is a `map[string]any`, an array a `[]any`, a number a `float64`. When the default is a map or a struct, only a JSON object is served, and when it is a slice or an array, only a JSON array; any other document resolves to the default with `TYPE_MISMATCH`.
 
-If the first config state does not arrive within the connection timeout, initialization still completes and evaluations return their defaults. The provider keeps connecting, and emits `PROVIDER_READY` once config state arrives. It emits `PROVIDER_CONFIGURATION_CHANGED` whenever configs are updated, with the keys the update carried followed by the keys that were removed.
+`PROVIDER_READY` fires once, when config first arrives. The provider emits `PROVIDER_CONFIGURATION_CHANGED` whenever configs are updated, with the keys the update carried followed by the keys that were removed.
 
 ## Test your code
 

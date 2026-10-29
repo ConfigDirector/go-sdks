@@ -3,10 +3,12 @@ package configdirectoropenfeature
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"reflect"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/ConfigDirector/go-sdks/configdirector"
 	"github.com/ConfigDirector/go-sdks/configdirector/wrapper"
@@ -16,6 +18,9 @@ import (
 const (
 	providerName             = "configdirector"
 	loggerComponentAttribute = "configdirector-openfeature"
+	noConfigStateInTime      = "No config arrived from ConfigDirector within the connection timeout. Flags resolve to their in-code default values until config arrives."
+
+	timeAllowedForOpenFeatureToRecordTheFailure = time.Second
 )
 
 // Provider is an OpenFeature provider backed by the ConfigDirector Go server SDK.
@@ -34,20 +39,26 @@ const (
 // invalid kind still resolves successfully, to the value for no context, and the SDK logs the
 // error.
 //
-// If the first config state does not arrive within the connection timeout, initialization still
-// completes and evaluations return their default value with the error code PROVIDER_NOT_READY.
-// The provider keeps connecting, and emits PROVIDER_READY once config state arrives. It emits
-// PROVIDER_CONFIGURATION_CHANGED whenever config state is updated, naming the flags the update
-// carried followed by the flags that were removed.
+// If the first config state does not arrive within the connection timeout, or ConfigDirector
+// rejects the SDK key, initialization fails with a *openfeature.ProviderInitError whose ErrorCode
+// is openfeature.ProviderNotReadyCode: openfeature.SetProviderAndWait returns an error wrapping
+// it, OpenFeature reports ErrorState, and evaluations return their in-code default value with the
+// error code PROVIDER_NOT_READY. After a timeout the provider keeps connecting and emits
+// PROVIDER_READY once config state arrives, and OpenFeature reports ReadyState from then on. To
+// start without waiting for ConfigDirector, register the provider with openfeature.SetProvider
+// instead, or handle the error.
+// The provider emits PROVIDER_CONFIGURATION_CHANGED whenever config state is updated, naming the
+// flags the update carried followed by the flags that were removed.
 type Provider struct {
 	client  *configdirector.Client
 	logger  *slog.Logger
 	events  chan openfeature.Event
 	closing chan struct{}
 
-	mutex       sync.Mutex
-	initialized bool
-	closeOnce   sync.Once
+	mutex              sync.Mutex
+	startup            startup
+	configStateArrived bool
+	closeOnce          sync.Once
 }
 
 var (
@@ -79,7 +90,7 @@ func newProvider(open func(hooks configdirector.Hooks) (*configdirector.Client, 
 		closing: make(chan struct{}),
 	}
 	client, err := open(configdirector.Hooks{
-		OnReady:          provider.announceReadiness,
+		OnReady:          provider.recordTheFirstConfigState,
 		OnConfigsUpdated: provider.announceChangedFlags,
 	})
 	if err != nil {
@@ -133,19 +144,23 @@ func (*Provider) Hooks() []openfeature.Hook {
 	return nil
 }
 
-// Init waits for the first config state for the client's connection timeout. It returns nil
-// whether or not config state arrived, so initialization completes either way, and
-// configdirector.ErrClientClosed when the provider was shut down first. OpenFeature calls it when
-// the provider is registered.
+// Init waits for the first config state for the client's connection timeout. It returns nil once
+// config state arrived, a *openfeature.ProviderInitError whose ErrorCode is
+// openfeature.ProviderNotReadyCode when the timeout elapsed first, as it does when ConfigDirector
+// rejects the SDK key, and configdirector.ErrClientClosed when the provider was shut down first.
+// OpenFeature calls it when the provider is registered.
 func (provider *Provider) Init(_ openfeature.EvaluationContext) error {
 	err := provider.client.WaitForReady(context.Background())
 
 	switch initializationOutcomeFor(err) {
 	case initializationFailsOnAClosedClient:
 		return err
-	case initializationCompletesWithOrWithoutConfigState:
+	case initializationFailsWithoutConfigState:
+		provider.scheduleTheReadinessCheck()
+		return &openfeature.ProviderInitError{ErrorCode: openfeature.ProviderNotReadyCode, Message: noConfigStateInTime}
+	case initializationSucceeds:
 		provider.mutex.Lock()
-		provider.initialized = true
+		provider.startup = startupReady
 		provider.mutex.Unlock()
 	}
 	return nil
@@ -154,15 +169,49 @@ func (provider *Provider) Init(_ openfeature.EvaluationContext) error {
 type initializationOutcome int
 
 const (
-	initializationCompletesWithOrWithoutConfigState initializationOutcome = iota
+	initializationSucceeds initializationOutcome = iota
+	initializationFailsWithoutConfigState
 	initializationFailsOnAClosedClient
 )
 
 func initializationOutcomeFor(waitError error) initializationOutcome {
-	if errors.Is(waitError, configdirector.ErrClientClosed) {
+	switch {
+	case waitError == nil:
+		return initializationSucceeds
+	case errors.Is(waitError, configdirector.ErrClientClosed):
 		return initializationFailsOnAClosedClient
+	default:
+		return initializationFailsWithoutConfigState
 	}
-	return initializationCompletesWithOrWithoutConfigState
+}
+
+type startup int
+
+const (
+	startupInitializing startup = iota
+	startupAwaitingTheRecordedFailure
+	startupAwaitingConfigState
+	startupReady
+)
+
+func (provider *Provider) scheduleTheReadinessCheck() {
+	provider.mutex.Lock()
+	provider.startup = startupAwaitingTheRecordedFailure
+	provider.mutex.Unlock()
+	go provider.announceReadinessOnceTheFailureIsRecorded()
+}
+
+func (provider *Provider) announceReadinessOnceTheFailureIsRecorded() {
+	select {
+	case <-time.After(timeAllowedForOpenFeatureToRecordTheFailure):
+	case <-provider.closing:
+		return
+	}
+
+	provider.mutex.Lock()
+	provider.startup = startupAwaitingConfigState
+	provider.mutex.Unlock()
+	provider.announceReadiness()
 }
 
 // Shutdown closes the ConfigDirector client, which sends the telemetry collected since the last
@@ -179,8 +228,8 @@ func (provider *Provider) Shutdown() {
 
 // EventChannel delivers the provider's events to OpenFeature: PROVIDER_CONFIGURATION_CHANGED on
 // every config state update and PROVIDER_READY when config state arrives after initialization
-// completed without it. The channel holds one event; a further event waits until OpenFeature
-// reads it.
+// failed without it. The channel holds one event; a further event waits until OpenFeature reads
+// it.
 func (provider *Provider) EventChannel() <-chan openfeature.Event {
 	return provider.events
 }
@@ -196,26 +245,45 @@ func (provider *Provider) announceChangedFlags(update configdirector.ConfigsUpda
 type readinessAnnouncer int
 
 const (
-	openFeatureAnnouncesReadiness readinessAnnouncer = iota
+	initializationAnnouncesReadiness readinessAnnouncer = iota
+	readinessCheckAnnouncesReadiness
+	firstConfigStateAnnouncesReadiness
 	providerAnnouncesReadiness
+	readinessWasAnnounced
 )
 
-func readinessAnnouncerFor(initialized bool) readinessAnnouncer {
-	if initialized {
-		return providerAnnouncesReadiness
+func readinessAnnouncerFor(phase startup, configStateArrived bool) readinessAnnouncer {
+	switch phase {
+	case startupInitializing:
+		return initializationAnnouncesReadiness
+	case startupAwaitingTheRecordedFailure:
+		return readinessCheckAnnouncesReadiness
+	case startupAwaitingConfigState:
+		if configStateArrived {
+			return providerAnnouncesReadiness
+		}
+		return firstConfigStateAnnouncesReadiness
+	case startupReady:
+		return readinessWasAnnounced
 	}
-	return openFeatureAnnouncesReadiness
+	panic(fmt.Sprintf("configdirector-openfeature: the startup phase %d has no readiness announcer", phase))
+}
+
+func (provider *Provider) recordTheFirstConfigState() {
+	provider.mutex.Lock()
+	provider.configStateArrived = true
+	provider.mutex.Unlock()
+	provider.announceReadiness()
 }
 
 func (provider *Provider) announceReadiness() {
 	provider.mutex.Lock()
-	announcer := readinessAnnouncerFor(provider.initialized)
-	provider.mutex.Unlock()
-
-	switch announcer {
-	case openFeatureAnnouncesReadiness:
-		return
+	switch readinessAnnouncerFor(provider.startup, provider.configStateArrived) {
+	case initializationAnnouncesReadiness, readinessCheckAnnouncesReadiness, firstConfigStateAnnouncesReadiness, readinessWasAnnounced:
+		provider.mutex.Unlock()
 	case providerAnnouncesReadiness:
+		provider.startup = startupReady
+		provider.mutex.Unlock()
 		provider.deliverToOpenFeature(openfeature.Event{
 			ProviderName:         providerName,
 			EventType:            openfeature.ProviderReady,

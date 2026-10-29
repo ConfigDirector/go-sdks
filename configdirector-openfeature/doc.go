@@ -8,7 +8,7 @@
 //		log.Fatal(err)
 //	}
 //	if err := openfeature.SetProviderAndWait(provider); err != nil {
-//		log.Fatal(err)
+//		slog.Warn("Starting on in-code default values until ConfigDirector sends config", slog.Any("cause", err))
 //	}
 //	defer openfeature.Shutdown()
 //
@@ -17,6 +17,10 @@
 //	if client.Boolean(ctx, "new-checkout", false, user) {
 //		// ...
 //	}
+//
+// SetProviderAndWait returns an error when no config arrives within the connection timeout, and
+// the example then starts on in-code default values until config arrives. To start without
+// waiting for ConfigDirector, register the provider with openfeature.SetProvider instead.
 //
 // The provider takes the same configdirector.Options as the SDK's client, so the connection mode,
 // timeout, application metadata and telemetry are configured as they are for the SDK.

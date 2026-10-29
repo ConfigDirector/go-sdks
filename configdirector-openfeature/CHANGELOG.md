@@ -9,6 +9,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+
+- When no config arrives within the connection timeout, initialization now fails:
+  `SetProviderAndWait` and `SetProviderWithContextAndWait` return an error, and the provider
+  reports `ErrorState` until config arrives, then `ReadyState`. Before, it reported `ReadyState`
+  while serving in-code default values, then ready again once config arrived. To start without
+  waiting for ConfigDirector, call `SetProvider` instead, or handle the error.
+
 ### Fixed
 
 - An object evaluation whose in-code default value is a map or a struct now resolves to the

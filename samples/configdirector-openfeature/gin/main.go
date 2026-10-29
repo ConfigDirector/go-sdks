@@ -59,11 +59,13 @@ func run() error {
 	}
 	client.AddHandler(openfeature.ProviderConfigChange, &logChangedFlags)
 
-	if err := openfeature.SetProviderWithContextAndWait(ctx, provider); err != nil {
-		provider.Shutdown()
-		return fmt.Errorf("the ConfigDirector provider could not be registered: %w", err)
-	}
 	defer openfeature.Shutdown()
+	if err := openfeature.SetProviderWithContextAndWait(ctx, provider); err != nil {
+		if _, noConfigInTime := errors.AsType[*openfeature.ProviderInitError](err); !noConfigInTime {
+			return fmt.Errorf("the ConfigDirector provider could not be registered: %w", err)
+		}
+		logger.Warn("Starting on in-code default values until ConfigDirector sends config", slog.Any("cause", err))
+	}
 	logger.Info("The ConfigDirector provider is registered")
 
 	return serve(ctx, newRouter(client), logger)

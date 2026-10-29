@@ -340,6 +340,46 @@ func TestAnInvalidContextKindResolvesSuccessfullyToTheNoContextValue(t *testing.
 	require.Equal(t, configdirector.UserContext{}, await(t, evaluated))
 }
 
+func TestAnAfterHookSeesTargetingMatchAndTheValueIDForAServedValue(t *testing.T) {
+	t.Parallel()
+	fixture := registeredProviderServing(t, map[string]any{"new-checkout": true})
+	hook := &recordingHook{}
+	fixture.client.AddHooks(hook)
+
+	fixture.client.Boolean(t.Context(), "new-checkout", false, noContext)
+
+	require.Len(t, hook.afterDetails, 1)
+	require.Equal(t, openfeature.TargetingMatchReason, hook.afterDetails[0].Reason)
+	require.Equal(t, "test-value:new-checkout", hook.afterDetails[0].Variant)
+}
+
+func TestAnErrorHookSeesFlagNotFoundForAConfigThatDoesNotExist(t *testing.T) {
+	t.Parallel()
+	fixture := registeredProviderServing(t, map[string]any{"greeting": "hello"})
+	hook := &recordingHook{}
+	fixture.client.AddHooks(hook)
+
+	fixture.client.Boolean(t.Context(), "new-checkout", false, noContext)
+
+	require.Len(t, hook.errors, 1)
+	require.ErrorContains(t, hook.errors[0], string(openfeature.FlagNotFoundCode))
+}
+
+type recordingHook struct {
+	openfeature.UnimplementedHook
+	afterDetails []openfeature.InterfaceEvaluationDetails
+	errors       []error
+}
+
+func (hook *recordingHook) After(_ context.Context, _ openfeature.HookContext, details openfeature.InterfaceEvaluationDetails, _ openfeature.HookHints) error {
+	hook.afterDetails = append(hook.afterDetails, details)
+	return nil
+}
+
+func (hook *recordingHook) Error(_ context.Context, _ openfeature.HookContext, err error, _ openfeature.HookHints) {
+	hook.errors = append(hook.errors, err)
+}
+
 func TestTheFirstConfigStateAnnouncesEveryFlag(t *testing.T) {
 	t.Parallel()
 	fixture := providerServing(t, map[string]any{"greeting": "hello", "new-checkout": true})
@@ -378,29 +418,128 @@ func TestARemovedFlagIsAnnouncedAfterTheFlagsTheUpdateCarried(t *testing.T) {
 	require.Equal(t, "fallback", fixture.client.String(t.Context(), "a", "fallback", noContext))
 }
 
-func TestEvaluationsBeforeTheFirstConfigStateReportTheProviderNotReady(t *testing.T) {
+func TestInitializationFailsAsNotReadyWhenNoConfigStateArrivesWithinTheTimeout(t *testing.T) {
 	t.Parallel()
-	fixture := registeredProviderServing(t, map[string]any{"greeting": "hello"}, configdirectortest.HoldInitialization(), configdirectortest.WithTimeout(50*time.Millisecond))
+	fixture := providerServing(t, map[string]any{"greeting": "hello"}, configdirectortest.HoldInitialization(), configdirectortest.WithTimeout(50*time.Millisecond))
+
+	err := fixture.api.SetProviderAndWait(t.Context(), fixture.provider)
+
+	var initializationError *openfeature.ProviderInitError
+	require.ErrorAs(t, err, &initializationError)
+	require.Equal(t, openfeature.ProviderNotReadyCode, initializationError.ErrorCode)
+	require.NotErrorIs(t, err, context.DeadlineExceeded)
+	require.Equal(t, openfeature.ErrorState, fixture.client.State())
 
 	details, err := fixture.client.StringValueDetails(t.Context(), "greeting", "fallback", noContext)
 
 	require.Error(t, err)
 	require.Equal(t, "fallback", details.Value)
 	require.Equal(t, openfeature.ProviderNotReadyCode, details.ErrorCode)
-	require.Equal(t, openfeature.ReadyState, fixture.client.State())
 }
 
-func TestConfigStateArrivingAfterInitializationIsAnnouncedAsReadyAndEvaluated(t *testing.T) {
+func TestInitializationFailsAsNotReadyWhenConfigDirectorRejectsTheSDKKey(t *testing.T) {
+	t.Parallel()
+	fixture := providerServing(t, map[string]any{"greeting": "hello"}, configdirectortest.HoldInitialization(), configdirectortest.WithTimeout(50*time.Millisecond))
+	fixture.testClient.FailInitialization()
+
+	err := fixture.api.SetProviderAndWait(t.Context(), fixture.provider)
+
+	var initializationError *openfeature.ProviderInitError
+	require.ErrorAs(t, err, &initializationError)
+	require.Equal(t, openfeature.ProviderNotReadyCode, initializationError.ErrorCode)
+	require.Equal(t, openfeature.ErrorState, fixture.client.State())
+}
+
+func TestConfigStateArrivingAfterAFailedInitializationIsAnnouncedAsReadyOnceAndEvaluated(t *testing.T) {
 	t.Parallel()
 	fixture := providerServing(t, map[string]any{"greeting": "hello"}, configdirectortest.HoldInitialization(), configdirectortest.WithTimeout(50*time.Millisecond))
 	readiness := recordEvents(fixture.client, openfeature.ProviderReady)
-	fixture.register(t)
-	readiness.next(t)
+	changes := recordEvents(fixture.client, openfeature.ProviderConfigChange)
+	require.Error(t, fixture.api.SetProviderAndWait(t.Context(), fixture.provider))
+	awaitTheEndOfEveryReadinessCheck(t)
 
 	fixture.testClient.CompleteInitialization()
 
 	require.Equal(t, "configdirector", readiness.next(t).ProviderName)
+	require.Equal(t, openfeature.ReadyState, fixture.client.State())
 	require.Equal(t, "hello", fixture.client.String(t.Context(), "greeting", "fallback", noContext))
+	changes.next(t)
+
+	require.NoError(t, fixture.testClient.SetValue("greeting", "hi"))
+
+	changes.next(t)
+	require.Empty(t, readiness.received())
+}
+
+func TestAFailedInitializationAnnouncesNoReadinessBeforeConfigStateArrives(t *testing.T) {
+	t.Parallel()
+	fixture := providerServing(t, map[string]any{"greeting": "hello"}, configdirectortest.HoldInitialization(), configdirectortest.WithTimeout(50*time.Millisecond))
+	readiness := recordEvents(fixture.client, openfeature.ProviderReady)
+	require.Error(t, fixture.api.SetProviderAndWait(t.Context(), fixture.provider))
+
+	awaitTheEndOfEveryReadinessCheck(t)
+
+	require.Never(t, func() bool { return len(readiness.events) > 0 }, 200*time.Millisecond, 10*time.Millisecond)
+	require.Equal(t, openfeature.ErrorState, fixture.client.State())
+}
+
+func TestConfigStateArrivingWhileOpenFeatureRecordsTheFailedInitializationIsAnnouncedAsReady(t *testing.T) {
+	t.Parallel()
+	fixture := providerServing(t, map[string]any{"greeting": "hello"}, configdirectortest.HoldInitialization(), configdirectortest.WithTimeout(50*time.Millisecond))
+	readiness := recordEvents(fixture.client, openfeature.ProviderReady)
+	failures := recordEvents(fixture.client, openfeature.ProviderError)
+	changes := recordEvents(fixture.client, openfeature.ProviderConfigChange)
+	provider := &providerWhoseFailureOpenFeatureRecordsLate{Provider: fixture.provider, failed: make(chan struct{}), recordFailure: make(chan struct{})}
+	require.NoError(t, fixture.api.SetProvider(t.Context(), provider))
+	await(t, provider.failed)
+
+	fixture.testClient.CompleteInitialization()
+	changes.next(t)
+	require.NoError(t, fixture.testClient.SetValue("greeting", "hi"))
+	changes.next(t)
+
+	close(provider.recordFailure)
+
+	failures.next(t)
+	require.Equal(t, "configdirector", readiness.next(t).ProviderName)
+	require.Equal(t, openfeature.ReadyState, fixture.client.State())
+
+	require.NoError(t, fixture.testClient.SetValue("greeting", "hey"))
+
+	changes.next(t)
+	require.Empty(t, readiness.received())
+}
+
+type providerWhoseFailureOpenFeatureRecordsLate struct {
+	*Provider
+	failed        chan struct{}
+	recordFailure chan struct{}
+}
+
+func (provider *providerWhoseFailureOpenFeatureRecordsLate) Init(evaluationContext openfeature.EvaluationContext) error {
+	err := provider.Provider.Init(evaluationContext)
+	close(provider.failed)
+	<-provider.recordFailure
+	return err
+}
+
+func TestShuttingDownEndsAPendingReadinessCheck(t *testing.T) {
+	fixture := providerServing(t, map[string]any{"greeting": "hello"}, configdirectortest.HoldInitialization(), configdirectortest.WithTimeout(50*time.Millisecond))
+	require.Error(t, fixture.api.SetProviderAndWait(t.Context(), fixture.provider))
+	require.Eventually(t, func() bool { return readinessChecksRunning() == 1 }, awaitTimeout, 10*time.Millisecond)
+
+	fixture.provider.Shutdown()
+
+	require.Eventually(t, func() bool { return readinessChecksRunning() == 0 }, timeAllowedForOpenFeatureToRecordTheFailure/2, 10*time.Millisecond)
+}
+
+func awaitTheEndOfEveryReadinessCheck(t *testing.T) {
+	t.Helper()
+	require.Eventually(t, func() bool { return readinessChecksRunning() == 0 }, awaitTimeout, 10*time.Millisecond)
+}
+
+func readinessChecksRunning() int {
+	return goroutinesIn("(*Provider).announceReadinessOnceTheFailureIsRecorded")
 }
 
 func TestReadinessInTimeIsAnnouncedOnce(t *testing.T) {

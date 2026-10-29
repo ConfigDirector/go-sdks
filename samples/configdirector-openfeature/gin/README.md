@@ -78,11 +78,13 @@ logChangedFlags := func(details openfeature.EventDetails) {
 }
 client.AddHandler(openfeature.ProviderConfigChange, &logChangedFlags)
 
-if err := openfeature.SetProviderWithContextAndWait(ctx, provider); err != nil {
-	provider.Shutdown()
-	return fmt.Errorf("the ConfigDirector provider could not be registered: %w", err)
-}
 defer openfeature.Shutdown()
+if err := openfeature.SetProviderWithContextAndWait(ctx, provider); err != nil {
+	if _, noConfigInTime := errors.AsType[*openfeature.ProviderInitError](err); !noConfigInTime {
+		return fmt.Errorf("the ConfigDirector provider could not be registered: %w", err)
+	}
+	logger.Warn("Starting on in-code default values until ConfigDirector sends config", slog.Any("cause", err))
+}
 
 return serve(ctx, newRouter(client), logger)
 ```
@@ -99,12 +101,16 @@ it safe to read several configs per request.
 ## What else it demonstrates
 
 **Initialization is explicit and non-fatal.** `SetProviderWithContextAndWait` returns once the
-first config state arrives or the connection timeout elapses, and the app starts either way;
-Ctrl-C during the wait stops it instead. When the wait ends without config state the SDK logs a
-warning, every read answers the in-code default value it passes in, and the details route says
-why: the error code `PROVIDER_NOT_READY`. The provider keeps connecting, and the app logs
-`ConfigDirector is ready` when config state arrives, from the `OnReady` handler in
-`Options.Hooks`, which the provider passes on to its client.
+first config state arrives or the connection timeout elapses; Ctrl-C during the wait stops the
+app instead. When no config state arrives in time, the call returns an error wrapping a
+`*openfeature.ProviderInitError`, and the app logs `Starting on in-code default values until
+ConfigDirector sends config` and starts anyway. OpenFeature reports `ErrorState`, every read
+answers the in-code default value it passes in, and the details route says why: the error code
+`PROVIDER_NOT_READY`. The provider keeps connecting, and the app logs `ConfigDirector is ready`
+when config state arrives, from the `OnReady` handler in `Options.Hooks`, which the provider
+passes on to its client; OpenFeature then reports `ReadyState`. Any other registration error
+stops the app, and the deferred `openfeature.Shutdown` shuts the provider down however `run`
+returns.
 
 **In-code default values are the fallback.** Every read passes the value to serve when
 ConfigDirector is unreachable, so it should be the safe choice. The method decides the type the
