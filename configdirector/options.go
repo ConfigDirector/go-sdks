@@ -117,7 +117,8 @@ type ConnectionOptions struct {
 type TelemetryOptions struct {
 	// EventQueueLimit is the size limit of the telemetry event queue. When it is reached before
 	// events are flushed, older events are dropped and ConfigDirector counts the drops. Between
-	// 100 and 100,000; defaults to 5,000.
+	// 100 and 100,000; defaults to 5,000. Tracked events are held apart from this queue, at most
+	// 1,000 of them between flushes.
 	EventQueueLimit int
 
 	// FlushInterval is how often queued events are sent. Defaults to 30 seconds.

@@ -22,17 +22,18 @@ type eventReport struct {
 	contexts           []Context
 	droppedContexts    int
 	invalidContexts    invalidContextBatch
+	trackedEvents      []wireTrackedEvent
 }
 
 func (report eventReport) isEmpty() bool {
-	return len(report.evaluations) == 0 && len(report.contexts) == 0 && report.droppedEvaluations == 0 && report.droppedContexts == 0 && len(report.invalidContexts.entries) == 0
+	return len(report.evaluations) == 0 && len(report.contexts) == 0 && report.droppedEvaluations == 0 && report.droppedContexts == 0 && len(report.invalidContexts.entries) == 0 && len(report.trackedEvents) == 0
 }
 
 func (report eventReport) wire(serverSDKKey string, metaContext transport.MetaContext) wireReport {
 	wire := wireReport{
 		ServerSDKKey:   serverSDKKey,
 		MetaContext:    metaContext,
-		DiscreteEvents: wireDiscreteEvents{CapturedContexts: make([]wireContext, 0, len(report.contexts))},
+		DiscreteEvents: wireDiscreteEvents{CapturedContexts: make([]wireContext, 0, len(report.contexts)), TrackedEvents: report.trackedEvents},
 		AggregatedEvents: wireAggregatedEvents{
 			EvaluatedConfig: make([]wireAggregatedEvent, 0, len(report.evaluations)),
 			InvalidContext:  make([]wireAggregatedInvalidContext, 0, len(report.invalidContexts.entries)),
@@ -70,7 +71,8 @@ type wireReport struct {
 }
 
 type wireDiscreteEvents struct {
-	CapturedContexts []wireContext `json:"capturedContexts"`
+	CapturedContexts []wireContext      `json:"capturedContexts"`
+	TrackedEvents    []wireTrackedEvent `json:"trackedEvents"`
 }
 
 type wireAggregatedEvents struct {
@@ -118,6 +120,8 @@ func outcomeOfStatus(status int) reportOutcome {
 	switch {
 	case status >= 200 && status < 300:
 		return reportSent
+	case status == http.StatusRequestEntityTooLarge:
+		return reportFailed
 	case transport.IsFatalStatus(status):
 		return reportRefusedForGood
 	default:
@@ -154,7 +158,7 @@ func (reporter *httpReporter) send(report eventReport) reportOutcome {
 	outcome := outcomeOfStatus(status)
 	switch outcome {
 	case reportSent:
-		logger.Debug("Sent a telemetry report", slog.Int("evaluations", len(report.evaluations)), slog.Int("contexts", len(report.contexts)), slog.Int("invalidContexts", len(report.invalidContexts.entries)))
+		logger.Debug("Sent a telemetry report", slog.Int("evaluations", len(report.evaluations)), slog.Int("contexts", len(report.contexts)), slog.Int("invalidContexts", len(report.invalidContexts.entries)), slog.Int("trackedEvents", len(report.trackedEvents)))
 	case reportRefusedForGood:
 		logger.Error("The SDK server refused the telemetry report; no more telemetry is sent", slog.Int("status", status), slog.String("detail", http.StatusText(status)))
 	case reportFailed:

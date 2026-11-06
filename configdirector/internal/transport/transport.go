@@ -72,8 +72,20 @@ func (options Options) PostJSON(ctx context.Context, endpoint string, body any) 
 	return response.StatusCode, nil
 }
 
+// JSONWithoutHTMLEscaping writes value as compact JSON with <, > and & as they are, so text that
+// was measured before it was sent keeps its size.
+func JSONWithoutHTMLEscaping(value any) ([]byte, error) {
+	var compact bytes.Buffer
+	encoder := json.NewEncoder(&compact)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(compact.Bytes(), []byte("\n")), nil
+}
+
 func (options Options) jsonRequest(ctx context.Context, endpoint string, body any) (*http.Request, error) {
-	encoded, err := json.Marshal(body)
+	encoded, err := JSONWithoutHTMLEscaping(body)
 	if err != nil {
 		return nil, err
 	}

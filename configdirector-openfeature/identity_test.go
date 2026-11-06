@@ -30,7 +30,8 @@ type recordedRequest struct {
 
 type sdkServer struct {
 	*httptest.Server
-	polls chan recordedRequest
+	polls            chan recordedRequest
+	telemetryReports chan []byte
 }
 
 func startSDKServer(t *testing.T) *sdkServer {
@@ -40,7 +41,7 @@ func startSDKServer(t *testing.T) *sdkServer {
 
 func startSDKServerServing(t *testing.T, payload string) *sdkServer {
 	t.Helper()
-	server := &sdkServer{polls: make(chan recordedRequest, 16)}
+	server := &sdkServer{polls: make(chan recordedRequest, 16), telemetryReports: make(chan []byte, 16)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+pollingPath, func(writer http.ResponseWriter, request *http.Request) {
 		var body struct {
@@ -51,7 +52,9 @@ func startSDKServerServing(t *testing.T, payload string) *sdkServer {
 		writer.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(writer, payload)
 	})
-	mux.HandleFunc("POST "+telemetryPath, func(writer http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("POST "+telemetryPath, func(writer http.ResponseWriter, request *http.Request) {
+		report, _ := io.ReadAll(request.Body)
+		server.telemetryReports <- report
 		writer.WriteHeader(http.StatusNoContent)
 	})
 	server.Server = httptest.NewServer(mux)

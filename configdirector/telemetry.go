@@ -1,6 +1,7 @@
 package configdirector
 
 import (
+	"log/slog"
 	"reflect"
 
 	"github.com/ConfigDirector/go-sdks/configdirector/internal/evaluation"
@@ -10,15 +11,45 @@ import (
 type telemetryCollector interface {
 	Record(evaluated telemetry.Evaluation, context telemetry.Context)
 	RecordInvalidContext(contextKindSample string) telemetry.InvalidContextRecording
+	RecordTrackedEvent(admission telemetry.TrackedEventAdmission, userContext UserContext)
 	Close()
 }
 
-func startTelemetry(settings clientSettings) *telemetry.Collector {
-	return telemetry.Start(telemetry.Options{
+type reportingTelemetry struct {
+	*telemetry.Collector
+}
+
+func (reporting reportingTelemetry) RecordTrackedEvent(admission telemetry.TrackedEventAdmission, _ UserContext) {
+	reporting.Collector.RecordTrackedEvent(admission)
+}
+
+type discardingTelemetry struct {
+	telemetry.Discarding
+}
+
+func (discardingTelemetry) RecordTrackedEvent(telemetry.TrackedEventAdmission, UserContext) {}
+
+type trackedEventRecordingTelemetry struct {
+	telemetry.Discarding
+	logger *slog.Logger
+	record func(admission telemetry.TrackedEventAdmission, userContext UserContext)
+}
+
+func (recording trackedEventRecordingTelemetry) RecordTrackedEvent(admission telemetry.TrackedEventAdmission, userContext UserContext) {
+	for _, warning := range admission.Warnings {
+		recording.logger.Warn(string(warning))
+	}
+	if admission.Admitted {
+		recording.record(admission, userContext)
+	}
+}
+
+func startTelemetry(settings clientSettings) reportingTelemetry {
+	return reportingTelemetry{telemetry.Start(telemetry.Options{
 		Transport:       settings.transportOptions(),
 		EventQueueLimit: settings.eventQueueLimit,
 		FlushInterval:   settings.flushInterval,
-	})
+	})}
 }
 
 type readKind int

@@ -16,7 +16,8 @@ type telemetryReport struct {
 	ServerSDKKey   string            `json:"serverSdkKey"`
 	MetaContext    map[string]string `json:"metaContext"`
 	DiscreteEvents struct {
-		CapturedContexts []capturedContext `json:"capturedContexts"`
+		CapturedContexts []capturedContext   `json:"capturedContexts"`
+		TrackedEvents    []trackedEventEntry `json:"trackedEvents"`
 	} `json:"discreteEvents"`
 	AggregatedEvents struct {
 		EvaluatedConfig []aggregatedEvaluation     `json:"evaluatedConfig"`
@@ -73,6 +74,20 @@ type evaluatedConfigEvent struct {
 type telemetryValue struct {
 	Value   *string `json:"value"`
 	ValueID *string `json:"valueId"`
+}
+
+type trackedEventEntry struct {
+	Name              string          `json:"name"`
+	ContextKind       *string         `json:"contextKind"`
+	ContextIdentifier *string         `json:"contextIdentifier"`
+	Value             json.RawMessage `json:"value"`
+	Details           json.RawMessage `json:"details"`
+	HappenedAt        string          `json:"happenedAt"`
+}
+
+func withoutHappenedAt(entry trackedEventEntry) trackedEventEntry {
+	entry.HappenedAt = ""
+	return entry
 }
 
 var identifiedUser = configdirector.UserContext{ID: "user-123", Name: "Ada", Traits: map[string]any{"plan": "pro"}}

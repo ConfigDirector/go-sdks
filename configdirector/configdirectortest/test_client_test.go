@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -679,4 +680,230 @@ func TestNothingReachesTheNetwork(t *testing.T) {
 	require.NoError(t, testClient.ReplaceValues(map[string]any{"new-checkout": false}))
 
 	require.False(t, testClient.Client().BoolValue("new-checkout", true, noUser))
+}
+
+func TestATestClientStartsWithNoTrackedEvents(t *testing.T) {
+	t.Parallel()
+	testClient := newTestClient(t, map[string]any{})
+
+	require.Empty(t, testClient.TrackedEvents())
+}
+
+func TestTrackedEventsAreRecordedInCallOrderWithWhatTheyWereTrackedWith(t *testing.T) {
+	t.Parallel()
+	testClient := newTestClient(t, map[string]any{})
+
+	testClient.Client().Track("checkout-completed", proUser, configdirector.TrackOptions{Value: 49.9, Details: configdirector.TrackedEventDetails{"plan": "pro"}})
+	testClient.Client().Track("nightly-sync-finished", noUser, configdirector.TrackOptions{})
+
+	require.Equal(t, []configdirectortest.TrackedEvent{
+		{Name: "checkout-completed", UserContext: proUser, Value: 49.9, Details: map[string]any{"plan": "pro"}},
+		{Name: "nightly-sync-finished"},
+	}, testClient.TrackedEvents())
+}
+
+func TestARecordedEventKeepsTheContextAsItWasSupplied(t *testing.T) {
+	t.Parallel()
+	testClient := newTestClient(t, map[string]any{})
+	anonymousDevice := configdirector.UserContext{ID: "device-42", Kind: "device", Name: "Kiosk", Anonymous: true}
+
+	testClient.Client().Track("kiosk-opened", anonymousDevice, configdirector.TrackOptions{})
+
+	require.Equal(t, anonymousDevice, testClient.TrackedEvents()[0].UserContext)
+}
+
+func TestAWholeNumberValueIsRecordedAsItWasGiven(t *testing.T) {
+	t.Parallel()
+	testClient := newTestClient(t, map[string]any{})
+
+	testClient.Client().Track("counted", noUser, configdirector.TrackOptions{Value: 3})
+
+	require.Equal(t, 3, testClient.TrackedEvents()[0].Value)
+}
+
+func TestAJSONNumberValueIsRecordedAsItWasGiven(t *testing.T) {
+	t.Parallel()
+	testClient := newTestClient(t, map[string]any{})
+
+	testClient.Client().Track("priced", noUser, configdirector.TrackOptions{Value: json.Number("49.90")})
+
+	require.Equal(t, json.Number("49.90"), testClient.TrackedEvents()[0].Value)
+}
+
+func TestRecordedDetailsKeepTheGoTypeOfEachValue(t *testing.T) {
+	t.Parallel()
+	testClient := newTestClient(t, map[string]any{})
+
+	testClient.Client().Track("checkout-completed", noUser, configdirector.TrackOptions{Details: configdirector.TrackedEventDetails{
+		"seats": 3,
+		"cart":  map[string]any{"items": []any{"book", 2}},
+		"tags":  []string{"gift"},
+	}})
+
+	require.Equal(t, map[string]any{
+		"seats": 3,
+		"cart":  map[string]any{"items": []any{"book", 2}},
+		"tags":  []string{"gift"},
+	}, testClient.TrackedEvents()[0].Details)
+}
+
+func TestRecordedDetailsAreACopyOfWhatWasTracked(t *testing.T) {
+	t.Parallel()
+	testClient := newTestClient(t, map[string]any{})
+	items := []any{"book"}
+	details := configdirector.TrackedEventDetails{"plan": "pro", "items": items}
+
+	testClient.Client().Track("checkout-completed", noUser, configdirector.TrackOptions{Details: details})
+	details["plan"] = "free"
+	items[0] = "pen"
+
+	require.Equal(t, map[string]any{"plan": "pro", "items": []any{"book"}}, testClient.TrackedEvents()[0].Details)
+}
+
+func TestNaNInRecordedDetailsIsRecordedAsTheNullTheSDKWouldSend(t *testing.T) {
+	t.Parallel()
+	testClient := newTestClient(t, map[string]any{})
+
+	testClient.Client().Track("checkout-completed", noUser, configdirector.TrackOptions{Details: configdirector.TrackedEventDetails{"score": math.NaN()}})
+
+	require.Equal(t, map[string]any{"score": nil}, testClient.TrackedEvents()[0].Details)
+}
+
+func TestAnEventWithAnEmptyNameIsNotRecordedAndEachOneLogsAWarning(t *testing.T) {
+	t.Parallel()
+	logger, records := newLogger()
+	testClient := newTestClient(t, map[string]any{}, configdirectortest.WithLogger(logger))
+
+	testClient.Client().Track("", noUser, configdirector.TrackOptions{})
+	testClient.Client().Track("", noUser, configdirector.TrackOptions{})
+
+	require.Empty(t, testClient.TrackedEvents())
+	require.Len(t, recordsAt(slog.LevelWarn, records()), 2)
+}
+
+func TestAnEventWhoseNameHas151CharactersIsNotRecorded(t *testing.T) {
+	t.Parallel()
+	testClient := newTestClient(t, map[string]any{})
+
+	testClient.Client().Track(strings.Repeat("n", 151), noUser, configdirector.TrackOptions{})
+
+	require.Empty(t, testClient.TrackedEvents())
+}
+
+func TestAValueTheSDKWouldLeaveOutIsMissingFromTheRecordAndEachOneLogsAWarning(t *testing.T) {
+	t.Parallel()
+	logger, records := newLogger()
+	testClient := newTestClient(t, map[string]any{}, configdirectortest.WithLogger(logger))
+
+	testClient.Client().Track("first", noUser, configdirector.TrackOptions{Value: math.NaN()})
+	testClient.Client().Track("second", noUser, configdirector.TrackOptions{Value: math.NaN()})
+
+	require.Equal(t, []configdirectortest.TrackedEvent{{Name: "first"}, {Name: "second"}}, testClient.TrackedEvents())
+	require.Len(t, recordsAt(slog.LevelWarn, records()), 2)
+}
+
+func TestDetailsTheSDKWouldLeaveOutAreMissingFromTheRecordAndEachOneLogsAWarning(t *testing.T) {
+	t.Parallel()
+	logger, records := newLogger()
+	testClient := newTestClient(t, map[string]any{}, configdirectortest.WithLogger(logger))
+	oversized := configdirector.TrackedEventDetails{"k": strings.Repeat("x", 1017)}
+
+	testClient.Client().Track("first", noUser, configdirector.TrackOptions{Details: oversized})
+	testClient.Client().Track("second", noUser, configdirector.TrackOptions{Details: oversized})
+
+	require.Equal(t, []configdirectortest.TrackedEvent{{Name: "first"}, {Name: "second"}}, testClient.TrackedEvents())
+	require.Len(t, recordsAt(slog.LevelWarn, records()), 2)
+}
+
+func TestAnEventForAnInvalidContextKindIsRecordedWithoutAContextAndLogsAnError(t *testing.T) {
+	t.Parallel()
+	logger, records := newLogger()
+	testClient := newTestClient(t, map[string]any{}, configdirectortest.WithLogger(logger))
+
+	testClient.Client().Track("checkout-completed", configdirector.UserContext{ID: "u-pro", Kind: "Device"}, configdirector.TrackOptions{})
+
+	require.Equal(t, []configdirectortest.TrackedEvent{{Name: "checkout-completed"}}, testClient.TrackedEvents())
+	require.Len(t, recordsAt(slog.LevelError, records()), 1)
+}
+
+func TestTheLimitOfAThousandEventsPerBatchDoesNotApplyToTheRecord(t *testing.T) {
+	t.Parallel()
+	logger, records := newLogger()
+	testClient := newTestClient(t, map[string]any{}, configdirectortest.WithLogger(logger))
+
+	for range 1001 {
+		testClient.Client().Track("checkout-completed", noUser, configdirector.TrackOptions{})
+	}
+
+	require.Len(t, testClient.TrackedEvents(), 1001)
+	require.Empty(t, recordsAt(slog.LevelWarn, records()))
+}
+
+func TestChangingTheReturnedEventsDoesNotChangeTheRecord(t *testing.T) {
+	t.Parallel()
+	testClient := newTestClient(t, map[string]any{})
+	testClient.Client().Track("checkout-completed", noUser, configdirector.TrackOptions{})
+
+	testClient.TrackedEvents()[0].Name = "changed"
+
+	require.Equal(t, "checkout-completed", testClient.TrackedEvents()[0].Name)
+}
+
+func TestClearTrackedEventsForgetsEveryEventRecordedSoFar(t *testing.T) {
+	t.Parallel()
+	testClient := newTestClient(t, map[string]any{})
+	testClient.Client().Track("before", noUser, configdirector.TrackOptions{})
+
+	testClient.ClearTrackedEvents()
+	require.Empty(t, testClient.TrackedEvents())
+
+	testClient.Client().Track("after", noUser, configdirector.TrackOptions{})
+	require.Equal(t, []configdirectortest.TrackedEvent{{Name: "after"}}, testClient.TrackedEvents())
+}
+
+func TestReplaceValuesLeavesTheRecordAlone(t *testing.T) {
+	t.Parallel()
+	testClient := newTestClient(t, map[string]any{})
+	testClient.Client().Track("checkout-completed", noUser, configdirector.TrackOptions{})
+
+	require.NoError(t, testClient.ReplaceValues(map[string]any{"greeting": "Hello"}))
+
+	require.Equal(t, []configdirectortest.TrackedEvent{{Name: "checkout-completed"}}, testClient.TrackedEvents())
+}
+
+func TestAnEventTrackedWhileInitializationIsHeldIsRecorded(t *testing.T) {
+	t.Parallel()
+	testClient := newTestClient(t, map[string]any{}, configdirectortest.HoldInitialization())
+
+	testClient.Client().Track("checkout-completed", noUser, configdirector.TrackOptions{})
+
+	require.Equal(t, []configdirectortest.TrackedEvent{{Name: "checkout-completed"}}, testClient.TrackedEvents())
+}
+
+func TestAnEventTrackedAfterCloseIsNotRecorded(t *testing.T) {
+	t.Parallel()
+	testClient := newTestClient(t, map[string]any{})
+	require.NoError(t, testClient.Close())
+
+	testClient.Client().Track("checkout-completed", noUser, configdirector.TrackOptions{})
+
+	require.Empty(t, testClient.TrackedEvents())
+}
+
+func TestEventsTrackedFromManyGoroutinesAreAllRecorded(t *testing.T) {
+	t.Parallel()
+	testClient := newTestClient(t, map[string]any{})
+
+	var goroutines sync.WaitGroup
+	for range 10 {
+		goroutines.Go(func() {
+			for range 50 {
+				testClient.Client().Track("checkout-completed", noUser, configdirector.TrackOptions{})
+				testClient.TrackedEvents()
+			}
+		})
+	}
+	goroutines.Wait()
+
+	require.Len(t, testClient.TrackedEvents(), 500)
 }

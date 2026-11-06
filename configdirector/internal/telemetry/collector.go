@@ -16,6 +16,8 @@ const (
 	initialFlushDelay     = 5 * time.Second
 	closeTimeout          = 5 * time.Second
 	evaluationShareTenths = 7
+
+	furtherTrackedEventsAreNotLogged = "; further tracked events like it are not logged until the next telemetry batch is sent"
 )
 
 // Options configure a Collector. The client validates and defaults them before handing them
@@ -33,23 +35,26 @@ type Options struct {
 	FlushInterval time.Duration
 }
 
-// Collector collects evaluations, the contexts they were made for and the invalid contexts
-// that were ignored, and reports them on a schedule: a first report 5 seconds after Start, then
-// one every flush interval, and a last one on Close. Nothing is sent when nothing was collected.
+// Collector collects evaluations, the contexts they were made for, the invalid contexts that were
+// ignored and tracked events, and reports them on a schedule: a first report 5 seconds after Start,
+// then one every flush interval, and a last one on Close. Nothing is sent when nothing was collected.
 //
 // The queue is the buffer for evaluations and contexts: EventQueueLimit entries, split 70%
 // evaluations and 30% distinct contexts, freed by every report. When a share is full the oldest
 // entry is dropped and counted in the next report. Invalid context submissions are held as at
 // most DistinctContextKindSampleLimit context kind samples with their counts plus one count for
-// the rest, freed by every report too. A fatal refusal from the SDK server, a 4xx other than 429,
-// stops collection for good with one error log; invalid context submissions made after that are
-// still held, within the same bound, so that each distinct context kind is logged at most once
-// more, and are never sent.
+// the rest, freed by every report too. Tracked events are held apart from those, at most 1,000
+// between reports, each already written out with its details of at most 1 KB, and freed by every
+// report. A refusal of a report as too large discards that report with a warning. Any other fatal
+// refusal from the SDK server, a 4xx other than 429, stops collection for good with one error log;
+// invalid context submissions made after that are still held, within the same bound, so that each
+// distinct context kind is logged at most once more, and are never sent.
 type Collector struct {
 	reporter        *httpReporter
 	evaluations     *eventQueue
 	contexts        *contextRegistry
 	invalidContexts *invalidContextSubmissions
+	trackedEvents   *trackedEventQueue
 	flushInterval   time.Duration
 
 	collecting atomic.Bool
@@ -66,6 +71,7 @@ func Start(options Options) *Collector {
 		evaluations:     newEventQueue(evaluationLimit),
 		contexts:        newContextRegistry(options.EventQueueLimit - evaluationLimit),
 		invalidContexts: newInvalidContextSubmissions(),
+		trackedEvents:   newTrackedEventQueue(),
 		flushInterval:   options.FlushInterval,
 		closing:         make(chan struct{}),
 		done:            make(chan struct{}),
@@ -99,6 +105,17 @@ func (collector *Collector) Record(evaluation Evaluation, context Context) {
 // context kinds go unnamed.
 func (collector *Collector) RecordInvalidContext(contextKindSample string) InvalidContextRecording {
 	return collector.invalidContexts.record(contextKindSample, time.Now())
+}
+
+// RecordTrackedEvent queues what a Track call was admitted as, for the next report.
+func (collector *Collector) RecordTrackedEvent(admission TrackedEventAdmission) {
+	if !collector.collecting.Load() {
+		return
+	}
+
+	for _, warning := range collector.trackedEvents.add(admission) {
+		collector.reporter.options.Logger.Warn(string(warning) + furtherTrackedEventsAreNotLogged)
+	}
 }
 
 // Close stops collecting and sends what was collected. It returns once that report is sent or
@@ -153,6 +170,7 @@ func (collector *Collector) flush() reportOutcome {
 		contexts:           contexts,
 		droppedContexts:    droppedContexts,
 		invalidContexts:    collector.invalidContexts.takeBatch(now),
+		trackedEvents:      collector.trackedEvents.takeBatch(),
 	}
 	if report.isEmpty() {
 		return reportSkippedEmpty
@@ -165,6 +183,7 @@ func (collector *Collector) stopCollecting() {
 	collector.evaluations.clear()
 	collector.contexts.clear()
 	collector.invalidContexts.clear()
+	collector.trackedEvents.clear()
 }
 
 // Discarding is the telemetry of a client that reports nothing, such as one built by package

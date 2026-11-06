@@ -23,8 +23,9 @@ type Receiver struct {
 type OpenConnection func(receiver Receiver) io.Closer
 
 // NewClientOverConnection builds a configdirector.Client over the connection an OpenConnection
-// opens, in place of a transport, and otherwise exactly as configdirector.NewClient builds one.
-// Package configdirector sets it when it initializes and package configdirectortest is its only
-// caller. This package cannot name either's types without an import cycle, so the value is held
-// as any and is a func(configdirector.Options, OpenConnection) (*configdirector.Client, error).
+// opens, in place of a transport, sending no telemetry and handing every tracked event to the func
+// it is given, and otherwise exactly as configdirector.NewClient builds one. Package configdirector
+// sets it when it initializes and package configdirectortest is its only caller. This package
+// cannot name either's types without an import cycle, so the value is held as any and is a
+// func(configdirector.Options, OpenConnection, func(telemetry.TrackedEventAdmission, configdirector.UserContext)) (*configdirector.Client, error).
 var NewClientOverConnection any

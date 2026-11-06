@@ -11,6 +11,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- The provider now implements OpenFeature's tracking. `client.Track(ctx, eventName, evaluationContext,
+  details)` reports to ConfigDirector that something happened, such as a completed checkout, so
+  ConfigDirector can show it on the live feed and count it for each variation of a running experiment.
+  Before, a `Track` call did nothing. The details' value is sent as the event's value, their attributes
+  as the event's details, and the targeting key (or `id` attribute) and `kind` of the merged evaluation
+  context as the context the event happened for. A value of 0 is sent as no value, because OpenFeature
+  Go has no way to say an event has none: attributes can only be added to details made with
+  `openfeature.NewTrackingEventDetails(0)`.
+- An event counts for an experiment only when its evaluation context has the targeting key the
+  experiment's flag was evaluated with. Without one, the event is still reported. The targeting key of
+  a context marked `anonymous` is not sent.
+- Tracked events are sent with the next telemetry batch, at most 1,000 per batch; events beyond that
+  are not reported. An event whose name does not have 1 to 150 characters is not reported. Attributes
+  with more than 20 keys, larger than 1 KB as JSON, or holding a value `encoding/json` cannot write, and
+  a value that is not a finite number, are left out and the event is still reported. Each of these logs
+  one warning per telemetry batch. `Track` never panics, and does nothing in
+  `configdirector.ConnectionModeOffline` or after `Shutdown`.
 - The evaluation counts the provider sends to ConfigDirector now say which variation was served, and
   which percentage rollout and share served it, so ConfigDirector can count the contexts each
   variation of an experiment reached.
@@ -26,6 +43,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   targeting rules after the rollout are not tried. Before, every such context was served the rollout's
   first share wider than 0%. Give an anonymous context a stable targeting key, such as a session ID,
   to keep it in a rollout. A rule that serves a single value still applies to a context without one.
+
+### Fixed
+
+- A telemetry report larger than ConfigDirector accepts is now discarded with a warning, and the next
+  report is still sent. Before, the provider stopped sending telemetry until the process restarted.
 
 ## [0.4.0] - 2026-10-28
 

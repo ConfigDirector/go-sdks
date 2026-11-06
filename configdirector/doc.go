@@ -32,6 +32,11 @@
 //		log.Printf("configs updated: %v", update.Keys)
 //	})
 //
+// To report that something happened, such as a completed checkout, track an event for the context
+// it happened for:
+//
+//	client.Track("checkout-completed", user, configdirector.TrackOptions{Value: 49.9})
+//
 // To test code that takes a *Client without a server, build the client with package
 // configdirectortest, which serves values a test controls.
 package configdirector

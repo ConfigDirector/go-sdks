@@ -22,20 +22,32 @@
 // delivered one at a time, in the order they were made, as the single connection goroutine
 // delivers them in production: a change made from inside a handler is delivered after the update
 // being handled, once that handler returns.
+//
+// The events the code under test tracks with Client.Track are recorded in TrackedEvents, under the
+// rules the SDK reports them by:
+//
+//	service.CompleteCheckout("user-123")
+//
+//	require.Equal(t, []configdirectortest.TrackedEvent{
+//		{Name: "checkout-completed", UserContext: configdirector.UserContext{ID: "user-123"}, Value: 49.9},
+//	}, testClient.TrackedEvents())
 package configdirectortest
 
 import (
 	"log/slog"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/ConfigDirector/go-sdks/configdirector"
 	"github.com/ConfigDirector/go-sdks/configdirector/internal/connectionseam"
 	"github.com/ConfigDirector/go-sdks/configdirector/internal/servedvalues"
+	"github.com/ConfigDirector/go-sdks/configdirector/internal/telemetry"
 )
 
 const testClientSDKKey = "test-client"
 
-var newClientOverConnection = connectionseam.NewClientOverConnection.(func(configdirector.Options, connectionseam.OpenConnection) (*configdirector.Client, error))
+var newClientOverConnection = connectionseam.NewClientOverConnection.(func(configdirector.Options, connectionseam.OpenConnection, func(telemetry.TrackedEventAdmission, configdirector.UserContext)) (*configdirector.Client, error))
 
 // TestClient is a real ConfigDirector client wired to an in-memory connection the test controls.
 // Build one with NewTestClient. The client under Client is the SDK's production client; the
@@ -43,6 +55,30 @@ var newClientOverConnection = connectionseam.NewClientOverConnection.(func(confi
 type TestClient struct {
 	connection *servedvalues.Connection
 	client     *configdirector.Client
+
+	trackedEventsMutex sync.Mutex
+	trackedEvents      []TrackedEvent
+}
+
+// TrackedEvent is an event the code under test tracked, as a test client recorded it.
+type TrackedEvent struct {
+	// Name is the name the event was tracked with.
+	Name string
+
+	// UserContext is the context the event was tracked for, as it was supplied. It is the zero value
+	// when there was none, or when its kind was invalid.
+	UserContext configdirector.UserContext
+
+	// Value is the value the event was tracked with, as it was given. It is nil when there was none,
+	// or when the SDK would leave it out.
+	Value any
+
+	// Details are the details the event was tracked with, keeping the Go type of each value, so
+	// details of map[string]any{"seats": 3} are recorded with the int 3. Each map[string]any and []any
+	// is a copy, so changing it after Track does not change the record; any other value is the one
+	// given. NaN and infinity in a map[string]any or a []any are recorded as nil, the null the SDK
+	// would send. It is nil when there were none, or when the SDK would leave them out.
+	Details configdirector.TrackedEventDetails
 }
 
 // Option adjusts how NewTestClient builds its client.
@@ -96,15 +132,21 @@ func NewTestClient(values map[string]any, options ...Option) *TestClient {
 		option(&settings)
 	}
 
-	connection := servedvalues.NewConnection(servedvalues.TestValues, configs)
-	client, err := newClientOverConnection(settings.options, connection.Open)
+	testClient := &TestClient{connection: servedvalues.NewConnection(servedvalues.TestValues, configs)}
+	testClient.client, err = newClientOverConnection(settings.options, testClient.connection.Open, testClient.recordTrackedEvent)
 	if err != nil {
 		panic(err)
 	}
 	if !settings.holdInitialization {
-		connection.CompleteInitialization()
+		testClient.connection.CompleteInitialization()
 	}
-	return &TestClient{connection: connection, client: client}
+	return testClient
+}
+
+func (testClient *TestClient) recordTrackedEvent(admission telemetry.TrackedEventAdmission, userContext configdirector.UserContext) {
+	testClient.trackedEventsMutex.Lock()
+	defer testClient.trackedEventsMutex.Unlock()
+	testClient.trackedEvents = append(testClient.trackedEvents, TrackedEvent{Name: admission.Name, UserContext: userContext, Value: admission.Value, Details: admission.Details})
 }
 
 // Client is the SDK client to hand to the code under test.
@@ -158,6 +200,27 @@ func (testClient *TestClient) CompleteInitialization() {
 // On a client that is ready or closed it does nothing.
 func (testClient *TestClient) FailInitialization() {
 	testClient.connection.FailInitialization()
+}
+
+// TrackedEvents returns every event the code under test tracked through the client, in call order,
+// as the SDK would report it, and starts from nothing after ClearTrackedEvents. An event whose name
+// does not have 1 to 150 characters is not recorded, and a value or details the SDK would leave out
+// are missing from the record. The limit of 1,000 events per telemetry batch does not apply. Since
+// no telemetry is sent, every event that is not recorded as it was tracked logs a warning, rather
+// than each cause once per telemetry batch. Holding the slice does not show later events; call
+// TrackedEvents again for them. ReplaceValues leaves the record alone.
+func (testClient *TestClient) TrackedEvents() []TrackedEvent {
+	testClient.trackedEventsMutex.Lock()
+	defer testClient.trackedEventsMutex.Unlock()
+	return slices.Clone(testClient.trackedEvents)
+}
+
+// ClearTrackedEvents forgets every event recorded so far. Use it to reset a test client shared
+// across tests, together with ReplaceValues.
+func (testClient *TestClient) ClearTrackedEvents() {
+	testClient.trackedEventsMutex.Lock()
+	defer testClient.trackedEventsMutex.Unlock()
+	testClient.trackedEvents = nil
 }
 
 // Close closes the client. After Close, reads return their in-code default value, every handler

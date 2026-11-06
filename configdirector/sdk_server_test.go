@@ -157,10 +157,10 @@ func recordedRequestFrom(request *http.Request) recordedRequest {
 }
 
 func (server *sdkServer) serveTelemetry(writer http.ResponseWriter, request *http.Request) {
-	server.telemetryRequests <- recordedRequestFrom(request)
 	server.mutex.Lock()
 	status := server.telemetryStatus
 	server.mutex.Unlock()
+	server.telemetryRequests <- recordedRequestFrom(request)
 	writer.WriteHeader(status)
 }
 

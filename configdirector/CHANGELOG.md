@@ -11,6 +11,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- `Track(eventName, userContext, options)` on the client reports to ConfigDirector that something
+  happened, such as a completed checkout, so ConfigDirector can show it on the live feed and count it
+  for each variation of a running experiment. Every argument is required: `UserContext{}` means no
+  context and `TrackOptions{}` means no value or details. `TrackOptions.Value` is a number of any
+  kind, such as an amount of money, a count or a duration: any integer or float kind, a `json.Number`,
+  or a type whose `MarshalText` writes a JSON number, such as a `*big.Int`, a `*big.Float` or a decimal
+  library's type, which is sent with every digit. `TrackOptions.Details` is a map whose values are
+  strings, numbers, booleans, or nested maps and slices, and accepts anything else `encoding/json` can
+  write. The new `TrackOptions`, `TrackedEventDetails` and `TrackedEventDetailValue` types are
+  exported.
+- An event counts for an experiment only when it is tracked for a context with an `ID`, the one the
+  experiment's config was evaluated for. With `UserContext{}`, or for a context without an `ID`, the
+  event is still reported. The `ID` of a context marked `Anonymous` is not sent. When a context's
+  `Kind` is invalid, the SDK logs an error as it does for an evaluation and sends the event without a
+  context.
+- Tracked events are sent with the next telemetry batch, at most 1,000 per batch; events beyond that
+  are not reported. An event whose name does not have 1 to 150 characters is not reported. Details
+  with more than 20 top-level keys, larger than 1 KB as JSON, or holding a value `encoding/json` cannot
+  write, and a `Value` that is not a finite number, are left out and the event is still reported. NaN
+  and infinity in a `map[string]any` or a `[]any` inside details are sent as null. Each of these logs
+  one warning per telemetry batch, except the null. `Track` never panics, and does nothing in
+  `ConnectionModeOffline` or after `Close`.
+- `TrackedEvents()` and `ClearTrackedEvents()` on the test client from `configdirectortest`:
+  `TrackedEvents` returns the events the code under test tracked, in call order, as
+  `TrackedEvent{Name, UserContext, Value, Details}`, and `ClearTrackedEvents` forgets them. An event
+  whose name the SDK would not report is not recorded, and a value or details the SDK would leave out
+  are missing from the record. The limit of 1,000 events per telemetry batch does not apply to the
+  record, and `ReplaceValues` leaves it alone. The new `TrackedEvent` type is exported from
+  `configdirectortest`.
 - `Evaluate(key, defaultValue, userContext)` on the client reads a config as the type of
   `defaultValue` and returns the `Evaluation`: the value, the reason it was served, its value ID and
   its variation. `Value` holds the type of `defaultValue`, which is a `bool`, a `string`, any integer
@@ -44,6 +73,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   without field names no longer compiles; add the field names. `==` on two `EvaluationDetails` or
   two `ConfigState` values compares `Variation` as a pointer, so two reads of the same variation
   compare unequal; compare `Variation.ID` instead.
+
+### Fixed
+
+- A telemetry report larger than ConfigDirector accepts is now discarded with a warning, and the next
+  report is still sent. Before, the SDK stopped sending telemetry until the process restarted.
 
 ## [0.4.0] - 2026-10-24
 

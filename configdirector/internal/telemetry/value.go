@@ -1,14 +1,13 @@
 package telemetry
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"strconv"
 	"unicode/utf8"
 
 	"github.com/ConfigDirector/go-sdks/configdirector/internal/evaluation"
+	"github.com/ConfigDirector/go-sdks/configdirector/internal/transport"
 )
 
 const maxInlineValueLength = 500
@@ -85,13 +84,11 @@ func scalarText(value any) string {
 }
 
 func documentText(value any) string {
-	var compact bytes.Buffer
-	encoder := json.NewEncoder(&compact)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(value); err != nil {
+	compact, err := transport.JSONWithoutHTMLEscaping(value)
+	if err != nil {
 		return fmt.Sprint(value)
 	}
-	return string(bytes.TrimSuffix(compact.Bytes(), []byte("\n")))
+	return string(compact)
 }
 
 func isLong(text string) bool {

@@ -140,3 +140,62 @@ func (registry *contextRegistry) resetLocked() {
 	registry.order = nil
 	registry.dropped = 0
 }
+
+type trackedEventQueue struct {
+	mutex                   sync.Mutex
+	entries                 []wireTrackedEvent
+	warningsRaisedThisBatch map[trackedEventWarning]struct{}
+}
+
+func newTrackedEventQueue() *trackedEventQueue {
+	return &trackedEventQueue{entries: []wireTrackedEvent{}, warningsRaisedThisBatch: map[trackedEventWarning]struct{}{}}
+}
+
+func (queue *trackedEventQueue) add(admission TrackedEventAdmission) []trackedEventWarning {
+	queue.mutex.Lock()
+	defer queue.mutex.Unlock()
+
+	return queue.firstThisBatchLocked(queue.warningsOfKeepingLocked(admission))
+}
+
+func (queue *trackedEventQueue) warningsOfKeepingLocked(admission TrackedEventAdmission) []trackedEventWarning {
+	if !admission.Admitted {
+		return admission.Warnings
+	}
+	if len(queue.entries) >= trackedEventsPerBatch {
+		return []trackedEventWarning{batchAlreadyFull}
+	}
+	queue.entries = append(queue.entries, admission.wire)
+	return admission.Warnings
+}
+
+func (queue *trackedEventQueue) firstThisBatchLocked(warnings []trackedEventWarning) []trackedEventWarning {
+	var firstThisBatch []trackedEventWarning
+	for _, warning := range warnings {
+		if _, raised := queue.warningsRaisedThisBatch[warning]; !raised {
+			queue.warningsRaisedThisBatch[warning] = struct{}{}
+			firstThisBatch = append(firstThisBatch, warning)
+		}
+	}
+	return firstThisBatch
+}
+
+func (queue *trackedEventQueue) takeBatch() []wireTrackedEvent {
+	queue.mutex.Lock()
+	defer queue.mutex.Unlock()
+
+	batch := queue.entries
+	queue.resetLocked()
+	return batch
+}
+
+func (queue *trackedEventQueue) clear() {
+	queue.mutex.Lock()
+	defer queue.mutex.Unlock()
+	queue.resetLocked()
+}
+
+func (queue *trackedEventQueue) resetLocked() {
+	queue.entries = []wireTrackedEvent{}
+	queue.warningsRaisedThisBatch = map[trackedEventWarning]struct{}{}
+}

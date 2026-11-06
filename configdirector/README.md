@@ -88,6 +88,33 @@ nil on every read.
 | `ReplaceValues(values)` | Replaces every stored value and delivers a full update. Use it to reset a test client shared across tests. |
 | `CompleteInitialization()` | Delivers the stored values to a client built with `HoldInitialization()`, on the calling goroutine, so the client is ready and a blocked `WaitForReady` has returned when the call returns. On a ready client it does nothing. |
 | `FailInitialization()` | Fails the held initialization the way a refused SDK key does: the failure is logged at error level and the client stays not ready, so reads return the in-code default value with the `client-not-ready` reason and a `WaitForReady` in flight ends with its timeout or its context. `CompleteInitialization()` still delivers the stored values afterwards. On a ready client it does nothing. |
+| `TrackedEvents()` | Returns the events the code under test tracked with `Track`, in call order. See [Tracked events](#tracked-events). |
+| `ClearTrackedEvents()` | Forgets every event recorded so far. `ReplaceValues` leaves them, so a test client shared across tests needs both to reset. |
+
+### Tracked events
+
+`testClient.TrackedEvents()` returns every event the code under test tracked, in call order, as
+`TrackedEvent{Name, UserContext, Value, Details}`, so a test can assert on them:
+
+```go
+func TestCheckoutIsTracked(t *testing.T) {
+	testClient := configdirectortest.NewTestClient(map[string]any{})
+	defer testClient.Close()
+	user := configdirector.UserContext{ID: "user-123"}
+
+	testClient.Client().Track("checkout-completed", user, configdirector.TrackOptions{Value: 49.9})
+
+	require.Equal(t, []configdirectortest.TrackedEvent{
+		{Name: "checkout-completed", UserContext: user, Value: 49.9},
+	}, testClient.TrackedEvents())
+}
+```
+
+The record follows the rules of a real report: an event whose name does not have 1 to 150
+characters is not recorded, and a value or details the SDK would leave out are missing from the
+record, with a warning logged each time. The limit of 1,000 events per telemetry batch does not
+apply. `Value` is what the code under test gave, and `Details` keep the Go type of each value, so
+details of `map[string]any{"seats": 3}` compare equal to that same map.
 
 ### Options
 

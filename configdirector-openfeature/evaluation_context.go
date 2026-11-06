@@ -25,6 +25,14 @@ func userContextFrom(flattenedContext openfeature.FlattenedContext) configdirect
 	}
 }
 
+func flattenedContextOf(evaluationContext openfeature.EvaluationContext) openfeature.FlattenedContext {
+	flattenedContext := evaluationContext.Attributes()
+	if targetingKey := evaluationContext.TargetingKey(); targetingKey != "" {
+		flattenedContext[openfeature.TargetingKey] = targetingKey
+	}
+	return flattenedContext
+}
+
 func identifierIn(flattenedContext openfeature.FlattenedContext) string {
 	if targetingKey, ok := flattenedContext[openfeature.TargetingKey].(string); ok && targetingKey != "" {
 		return targetingKey

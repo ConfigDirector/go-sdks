@@ -41,19 +41,19 @@ func newClientServingOfflineValues(settings clientSettings, hooks Hooks) *Client
 	offlineConnection := servedvalues.NewConnection(servedvalues.OfflineValues, settings.offlineConfigs)
 	client := newClient(settings, hooks, func(deliver func(document string)) connection {
 		return offlineConnection.Open(connectionseam.Receiver{Deliver: deliver, Logger: settings.logger})
-	}, telemetry.Discarding{})
+	}, discardingTelemetry{})
 	offlineConnection.CompleteInitialization()
 	return client
 }
 
-func newClientOverConnection(options Options, open connectionseam.OpenConnection) (*Client, error) {
+func newClientOverConnection(options Options, open connectionseam.OpenConnection, recordTrackedEvent func(telemetry.TrackedEventAdmission, UserContext)) (*Client, error) {
 	settings, err := settingsFrom(options)
 	if err != nil {
 		return nil, err
 	}
 	return newClient(settings, options.Hooks, func(deliver func(document string)) connection {
 		return open(connectionseam.Receiver{Deliver: deliver, Logger: settings.logger})
-	}, telemetry.Discarding{}), nil
+	}, trackedEventRecordingTelemetry{logger: settings.logger, record: recordTrackedEvent}), nil
 }
 
 func (settings clientSettings) transportOptions() transport.Options {

@@ -53,6 +53,9 @@ const (
 // instead, or handle the error.
 // The provider emits PROVIDER_CONFIGURATION_CHANGED whenever config state is updated, naming the
 // flags the update carried followed by the flags that were removed.
+//
+// A client's Track reports to ConfigDirector that something happened, such as a completed checkout;
+// see Provider.Track.
 type Provider struct {
 	client  *configdirector.Client
 	logger  *slog.Logger
@@ -69,6 +72,7 @@ var (
 	_ openfeature.FeatureProvider = (*Provider)(nil)
 	_ openfeature.StateHandler    = (*Provider)(nil)
 	_ openfeature.EventHandler    = (*Provider)(nil)
+	_ openfeature.Tracker         = (*Provider)(nil)
 )
 
 // NewProvider creates a provider whose ConfigDirector client is built from options, exactly as
@@ -330,6 +334,42 @@ func (provider *Provider) IntEvaluation(_ context.Context, flag string, defaultV
 // returns defaultValue as given when the flag falls back.
 func (provider *Provider) ObjectEvaluation(_ context.Context, flag string, defaultValue any, flattenedContext openfeature.FlattenedContext) openfeature.InterfaceResolutionDetail {
 	return documentResolutionOf(flag, defaultValue, flattenedContext, provider.client.JSONValueDetails)
+}
+
+// Track reports to ConfigDirector that something happened, such as a completed checkout, so it can
+// be counted. OpenFeature calls it from a client's Track, with the evaluation contexts already
+// merged. The event is sent with the next telemetry batch, and Track returns nothing, never panics,
+// and does nothing in configdirector.ConnectionModeOffline or after Shutdown.
+//
+// The details' value is sent as the event's value, and their attributes as the event's details.
+// OpenFeature Go has no way to say an event has no value, and attributes can only be added to details
+// that have one, as in openfeature.NewTrackingEventDetails(0).Add("plan", "pro"), so a value of 0 is
+// sent as no value. The evaluation context maps onto the context the event happened for as it does on
+// an evaluation.
+//
+// An event counts for an experiment only when its evaluation context has the targeting key, or the
+// "id" attribute, the experiment's flag was evaluated with. Without one, the event is still reported.
+// The identifier of a context marked anonymous is not sent, and when a context's kind is invalid the
+// SDK logs the error and sends the event without a context.
+//
+// A telemetry batch holds at most 1,000 tracked events, and events beyond that are not reported. An
+// event whose name does not have 1 to 150 characters is not reported. Attributes with more than 20
+// keys, larger than 1 KB as JSON, or holding a value encoding/json cannot write, and a value that is
+// not a finite number, are left out and the event is still reported. Each of these logs one warning
+// per telemetry batch.
+func (provider *Provider) Track(_ context.Context, trackingEventName string, evaluationContext openfeature.EvaluationContext, details openfeature.TrackingEventDetails) {
+	provider.client.Track(trackingEventName, userContextFrom(flattenedContextOf(evaluationContext)), trackOptionsFrom(details))
+}
+
+func trackOptionsFrom(details openfeature.TrackingEventDetails) configdirector.TrackOptions {
+	var options configdirector.TrackOptions
+	if value := details.Value(); value != 0 {
+		options.Value = value
+	}
+	if attributes := details.Attributes(); len(attributes) > 0 {
+		options.Details = attributes
+	}
+	return options
 }
 
 func documentResolutionOf(flag string, defaultValue any, flattenedContext openfeature.FlattenedContext, read func(key string, target any, userContext configdirector.UserContext) (configdirector.EvaluationDetails, error)) openfeature.InterfaceResolutionDetail {

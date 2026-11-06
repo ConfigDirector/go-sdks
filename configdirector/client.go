@@ -29,6 +29,8 @@ var ErrClientClosed = errors.New("configdirector: the client is closed")
 // OnReady, OnConfigsUpdated and OnConfigEvaluated, or watch one key with WatchBool and its
 // siblings. Handlers run on the connection's goroutine, so one that blocks delays later updates;
 // a panic in a handler is recovered and logged at error level, and the connection continues.
+//
+// To report that something happened, such as a completed checkout, call Track.
 type Client struct {
 	settings   clientSettings
 	connection connection
