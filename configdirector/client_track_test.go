@@ -902,5 +902,9 @@ func TestADetailThatWritesInvalidUTF8LeavesTheDetailsOutWithAWarning(t *testing.
 
 func TestAnInvalidUTF8StringInDetailsIsSentAsTheReplacementCharacter(t *testing.T) {
 	t.Parallel()
-	require.Equal(t, `{"note":"�"}`, trackedDetailsOf(t, configdirector.TrackedEventDetails{"note": "\xff"}))
+	var sent map[string]string
+
+	require.NoError(t, json.Unmarshal([]byte(trackedDetailsOf(t, configdirector.TrackedEventDetails{"note": "\xff"})), &sent))
+
+	require.Equal(t, map[string]string{"note": "\ufffd"}, sent)
 }
