@@ -24,12 +24,12 @@ func identifierIs(identifier string) AttributeCondition {
 	return textCondition("identifier", "", "equals", identifier)
 }
 
-func bucket(id string, width float64, value string) Percentage {
+func share(id string, width float64, value string) Percentage {
 	return Percentage{ID: id, Percentage: width, Value: value, ValueID: id + "-value"}
 }
 
-func percentageRule(buckets ...Percentage) Rule {
-	return Rule{ID: "rollout", Order: new(0), Kind: RuleKindPercentage, Target: RuleTargetPercentage, Percentages: buckets}
+func percentageRule(shares ...Percentage) Rule {
+	return Rule{ID: "rollout", Order: new(0), Kind: RuleKindPercentage, Target: RuleTargetPercentage, Percentages: shares}
 }
 
 func configWith(rules ...Rule) Config {
@@ -144,58 +144,169 @@ func TestAConditionalRuleWithAnUnknownTargetIsSkipped(t *testing.T) {
 }
 
 func TestAConditionalRuleCanTargetAPercentageRollout(t *testing.T) {
-	rollout := percentageRule(bucket("b0", 50, "0"), bucket("b1", 50, "1"))
+	rollout := percentageRule(share("b0", 50, "0"), share("b1", 50, "1"))
 	rollout.Kind = RuleKindConditional
 	rollout.Conditions = []Condition{identifierIs("u582")}
 	config := configWith(rollout)
 
 	served := Evaluate(config, Context{Identifier: "u582"}, nil)
 
-	require.Equal(t, ServedValue{Text: "1", ValueID: "b1-value", RuleMatched: true}, served)
+	require.Equal(t, ServedValue{Text: "1", ValueID: "b1-value", RuleID: "rollout", ShareID: "b1", RuleMatched: true}, served)
 }
 
-func TestAContextOnABucketBoundaryTakesTheBucketThatStartsThere(t *testing.T) {
-	config := configWith(percentageRule(bucket("b0", 50, "0"), bucket("b1", 50, "1")))
+func TestAContextOnAShareBoundaryTakesTheShareThatStartsThere(t *testing.T) {
+	config := configWith(percentageRule(share("b0", 50, "0"), share("b1", 50, "1")))
 
 	served := Evaluate(config, Context{Identifier: "u582"}, nil)
 
-	require.Equal(t, ServedValue{Text: "1", ValueID: "b1-value", RuleMatched: true}, served)
+	require.Equal(t, ServedValue{Text: "1", ValueID: "b1-value", RuleID: "rollout", ShareID: "b1", RuleMatched: true}, served)
 }
 
-func TestAContextBelowABucketBoundaryTakesTheBucketThatEndsThere(t *testing.T) {
-	config := configWith(percentageRule(bucket("b0", 50, "0"), bucket("b1", 50, "1")))
+func TestAContextBelowAShareBoundaryTakesTheShareThatEndsThere(t *testing.T) {
+	config := configWith(percentageRule(share("b0", 50, "0"), share("b1", 50, "1")))
 
 	served := Evaluate(config, Context{Identifier: "user-1"}, nil)
 
 	require.Equal(t, "0", served.Text)
 }
 
-func TestAZeroWidthBucketServesNobody(t *testing.T) {
-	config := configWith(percentageRule(bucket("b0", 50, "0"), bucket("b1", 0, "1"), bucket("b2", 50, "2")))
+func TestAZeroWidthShareServesNobody(t *testing.T) {
+	config := configWith(percentageRule(share("b0", 50, "0"), share("b1", 0, "1"), share("b2", 50, "2")))
 
 	served := Evaluate(config, Context{Identifier: "u582"}, nil)
 
 	require.Equal(t, "2", served.Text)
 }
 
-func TestAContextWithoutAnIdentifierTakesTheFirstBucketWithWidth(t *testing.T) {
-	config := configWith(percentageRule(bucket("b0", 0, "0"), bucket("b1", 10, "1"), bucket("b2", 90, "2")))
+func TestAContextWithoutAnIdentifierSkipsTheRollout(t *testing.T) {
+	config := configWith(percentageRule(share("b0", 0, "0"), share("b1", 10, "1"), share("b2", 90, "2")))
 
 	served := Evaluate(config, Context{}, nil)
 
-	require.Equal(t, "1", served.Text)
+	require.Equal(t, ServedValue{Text: "NONE", ValueID: "default-value", RolloutSkippedNoIdentifier: true}, served)
 }
 
-func TestADeviceWithoutAnIdentifierTakesTheFirstBucketWithWidthToo(t *testing.T) {
-	config := configWith(percentageRule(bucket("b0", 0, "0"), bucket("b1", 10, "1"), bucket("b2", 90, "2")))
+func TestADeviceWithoutAnIdentifierSkipsTheRolloutToo(t *testing.T) {
+	config := configWith(percentageRule(share("b0", 0, "0"), share("b1", 10, "1"), share("b2", 90, "2")))
 
 	served := Evaluate(config, Context{Kind: "device"}, nil)
 
-	require.Equal(t, "1", served.Text)
+	require.Equal(t, ServedValue{Text: "NONE", ValueID: "default-value", RolloutSkippedNoIdentifier: true}, served)
 }
 
-func TestADeviceAndAUserWithTheSameIdentifierCanLandInDifferentBuckets(t *testing.T) {
-	config := configWith(percentageRule(bucket("b0", 50, "0"), bucket("b1", 50, "1")))
+func TestASkippedRolloutReportsTheVariationOfTheDefaultTargetingRuleValue(t *testing.T) {
+	config := configWith(percentageRule(share("b0", 100, "0")))
+	config.TargetingRules.DefaultVariationID = "control"
+
+	served := Evaluate(config, Context{}, nil)
+
+	require.Equal(t, ServedValue{Text: "NONE", ValueID: "default-value", VariationID: "control", RolloutSkippedNoIdentifier: true}, served)
+}
+
+func TestASkippedRolloutEndsTheWalkWithoutTryingLaterRules(t *testing.T) {
+	config := configWith(percentageRule(share("b0", 100, "0")), valueRule("next", new(1), "B"))
+
+	served := Evaluate(config, Context{}, nil)
+
+	require.Equal(t, "NONE", served.Text)
+	require.True(t, served.RolloutSkippedNoIdentifier)
+}
+
+func TestARuleBeforeTheRolloutStillServesAContextWithoutAnIdentifier(t *testing.T) {
+	rollout := percentageRule(share("b0", 100, "0"))
+	rollout.Order = new(1)
+	config := configWith(rollout, valueRule("first", new(0), "A"))
+
+	served := Evaluate(config, Context{}, nil)
+
+	require.Equal(t, "A", served.Text)
+	require.False(t, served.RolloutSkippedNoIdentifier)
+}
+
+func TestAConditionalRolloutWhoseConditionsHoldSkipsForAContextWithoutAnIdentifier(t *testing.T) {
+	rollout := percentageRule(share("b0", 100, "0"))
+	rollout.Kind = RuleKindConditional
+	rollout.Conditions = []Condition{planIs("pro")}
+	config := configWith(rollout)
+
+	served := Evaluate(config, Context{Traits: map[string]any{"plan": "pro"}}, nil)
+
+	require.Equal(t, ServedValue{Text: "NONE", ValueID: "default-value", RolloutSkippedNoIdentifier: true}, served)
+}
+
+func TestAConditionalRolloutWhoseConditionsFailFallsThroughForAContextWithoutAnIdentifier(t *testing.T) {
+	rollout := percentageRule(share("b0", 100, "0"))
+	rollout.Kind = RuleKindConditional
+	rollout.Conditions = []Condition{planIs("pro")}
+	config := configWith(rollout, valueRule("next", new(1), "B"))
+
+	served := Evaluate(config, Context{Traits: map[string]any{"plan": "free"}}, nil)
+
+	require.Equal(t, "B", served.Text)
+	require.False(t, served.RolloutSkippedNoIdentifier)
+}
+
+func TestARolloutWithoutAShareListIsNotMatchedForAContextWithoutAnIdentifier(t *testing.T) {
+	config := configWith(percentageRule(), valueRule("next", new(1), "B"))
+
+	served := Evaluate(config, Context{}, nil)
+
+	require.Equal(t, "B", served.Text)
+	require.False(t, served.RolloutSkippedNoIdentifier)
+}
+
+func TestARolloutWithAnEmptyShareListIsSkippedForAContextWithoutAnIdentifier(t *testing.T) {
+	empty := percentageRule()
+	empty.Percentages = []Percentage{}
+	config := configWith(empty, valueRule("next", new(1), "B"))
+
+	served := Evaluate(config, Context{}, nil)
+
+	require.Equal(t, "NONE", served.Text)
+	require.True(t, served.RolloutSkippedNoIdentifier)
+}
+
+func TestARolloutWithAnEmptyShareListFallsThroughForAContextWithAnIdentifier(t *testing.T) {
+	empty := percentageRule()
+	empty.Percentages = []Percentage{}
+	config := configWith(empty, valueRule("next", new(1), "B"))
+
+	served := Evaluate(config, Context{Identifier: "u1"}, nil)
+
+	require.Equal(t, "B", served.Text)
+}
+
+func TestARolloutReportsItsRuleShareAndVariation(t *testing.T) {
+	treatment := share("b1", 50, "1")
+	treatment.VariationID = "treatment"
+	config := configWith(percentageRule(share("b0", 50, "0"), treatment))
+
+	served := Evaluate(config, Context{Identifier: "u582"}, nil)
+
+	require.Equal(t, ServedValue{Text: "1", ValueID: "b1-value", VariationID: "treatment", RuleID: "rollout", ShareID: "b1", RuleMatched: true}, served)
+}
+
+func TestARuleServingASingleValueReportsItsVariationAndNoRuleOrShare(t *testing.T) {
+	rule := valueRule("only", new(0), "A")
+	rule.VariationID = "treatment"
+	config := configWith(rule)
+
+	served := Evaluate(config, Context{}, nil)
+
+	require.Equal(t, ServedValue{Text: "A", ValueID: "only-value", VariationID: "treatment", RuleMatched: true}, served)
+}
+
+func TestTheDefaultTargetingRuleValueReportsItsVariationAndNoRuleOrShare(t *testing.T) {
+	config := configWith()
+	config.TargetingRules.DefaultVariationID = "control"
+
+	served := Evaluate(config, Context{Identifier: "u1"}, nil)
+
+	require.Equal(t, ServedValue{Text: "NONE", ValueID: "default-value", VariationID: "control"}, served)
+}
+
+func TestADeviceAndAUserWithTheSameIdentifierCanLandInDifferentShares(t *testing.T) {
+	config := configWith(percentageRule(share("b0", 50, "0"), share("b1", 50, "1")))
 	config.ID = "11111111-1111-4111-8111-111111111111"
 
 	user := Evaluate(config, Context{Identifier: "user-1"}, nil)
@@ -205,8 +316,8 @@ func TestADeviceAndAUserWithTheSameIdentifierCanLandInDifferentBuckets(t *testin
 	require.Equal(t, "1", device.Text)
 }
 
-func TestBucketsThatDoNotCoverTheContextServeTheDefaultTargetingRuleValue(t *testing.T) {
-	config := configWith(percentageRule(bucket("b0", 10, "0"), bucket("b1", 10, "1")))
+func TestSharesThatDoNotCoverTheContextServeTheDefaultTargetingRuleValue(t *testing.T) {
+	config := configWith(percentageRule(share("b0", 10, "0"), share("b1", 10, "1")))
 
 	served := Evaluate(config, Context{Identifier: "u582"}, nil)
 
@@ -214,7 +325,7 @@ func TestBucketsThatDoNotCoverTheContextServeTheDefaultTargetingRuleValue(t *tes
 }
 
 func TestAPercentageRuleCoveringNobodyFallsThroughToTheNextRule(t *testing.T) {
-	config := configWith(percentageRule(bucket("b0", 0, "0")), valueRule("next", new(1), "B"))
+	config := configWith(percentageRule(share("b0", 0, "0")), valueRule("next", new(1), "B"))
 
 	served := Evaluate(config, Context{Identifier: "u582"}, nil)
 

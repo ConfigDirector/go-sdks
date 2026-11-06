@@ -35,6 +35,11 @@ type sdkServer struct {
 
 func startSDKServer(t *testing.T) *sdkServer {
 	t.Helper()
+	return startSDKServerServing(t, configState)
+}
+
+func startSDKServerServing(t *testing.T, payload string) *sdkServer {
+	t.Helper()
 	server := &sdkServer{polls: make(chan recordedRequest, 16)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+pollingPath, func(writer http.ResponseWriter, request *http.Request) {
@@ -44,7 +49,7 @@ func startSDKServer(t *testing.T) *sdkServer {
 		_ = json.NewDecoder(request.Body).Decode(&body)
 		server.polls <- recordedRequest{userAgent: request.Header.Get("User-Agent"), metaContext: body.MetaContext}
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(writer, configState)
+		_, _ = io.WriteString(writer, payload)
 	})
 	mux.HandleFunc("POST "+telemetryPath, func(writer http.ResponseWriter, _ *http.Request) {
 		writer.WriteHeader(http.StatusNoContent)

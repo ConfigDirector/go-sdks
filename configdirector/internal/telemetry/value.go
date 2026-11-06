@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strconv"
 	"unicode/utf8"
 
@@ -64,15 +65,20 @@ func renderedText(value any, asJSON bool) string {
 }
 
 func scalarText(value any) string {
-	switch scalar := value.(type) {
-	case string:
-		return scalar
-	case bool:
-		return strconv.FormatBool(scalar)
-	case int64:
-		return strconv.FormatInt(scalar, 10)
-	case float64:
-		return evaluation.NumberText(scalar)
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.String:
+		return reflected.String()
+	case reflect.Bool:
+		return strconv.FormatBool(reflected.Bool())
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return strconv.FormatInt(reflected.Int(), 10)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return strconv.FormatUint(reflected.Uint(), 10)
+	case reflect.Float32:
+		return strconv.FormatFloat(reflected.Float(), 'f', -1, 32)
+	case reflect.Float64:
+		return evaluation.NumberText(reflected.Float())
 	default:
 		return fmt.Sprint(value)
 	}

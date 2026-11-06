@@ -428,7 +428,7 @@ func TestAnOmittedKindEvaluatesAsAUser(t *testing.T) {
 	require.False(t, device)
 }
 
-func TestADeviceAndAUserWithTheSameIDTakeTheirOwnBuckets(t *testing.T) {
+func TestADeviceAndAUserWithTheSameIDTakeTheirOwnShares(t *testing.T) {
 	t.Parallel()
 	client := newReadyClientServing(t, evenSplitConfig("variant"))
 

@@ -52,10 +52,10 @@ func (snapshot *configSnapshot) mergedWith(payload serverPayload) *configSnapsho
 	return merged
 }
 
-func (snapshot *configSnapshot) stateOf(key string, context evaluation.Context) (ConfigState, bool) {
+func (snapshot *configSnapshot) servedConfigOf(key string, context evaluation.Context) (servedConfig, bool) {
 	definition, found := snapshot.configs[key]
 	if !found {
-		return ConfigState{}, false
+		return servedConfig{}, false
 	}
 	return definition.evaluatedFor(context, snapshot.segments), true
 }
@@ -63,8 +63,8 @@ func (snapshot *configSnapshot) stateOf(key string, context evaluation.Context) 
 func (snapshot *configSnapshot) statesOf(keys []string, context evaluation.Context) []ConfigState {
 	states := make([]ConfigState, 0, len(keys))
 	for _, key := range keys {
-		if state, found := snapshot.stateOf(key, context); found {
-			states = append(states, state)
+		if config, found := snapshot.servedConfigOf(key, context); found {
+			states = append(states, config.state)
 		}
 	}
 	return states
@@ -92,16 +92,43 @@ func (snapshot *configSnapshot) changesFrom(previous *configSnapshot, payload se
 	return updated
 }
 
-func (definition configDefinition) evaluatedFor(context evaluation.Context, segments evaluation.Segments) ConfigState {
+type servedConfig struct {
+	state  ConfigState
+	reason EvaluationReason
+}
+
+func (config servedConfig) holdsAValue() bool {
+	return config.reason == EvaluationReasonFoundMatch || config.reason == EvaluationReasonRolloutSkippedNoIdentifier
+}
+
+func (definition configDefinition) evaluatedFor(context evaluation.Context, segments evaluation.Segments) servedConfig {
 	config := evaluation.Config{ID: definition.id, TargetingRules: definition.targetingRules}
-	served := evaluation.Evaluate(config, context, segments)
-	return ConfigState{
-		ID:      definition.id,
-		Key:     definition.key,
-		Type:    definition.configType,
-		Value:   served.Text,
-		ValueID: served.ValueID,
+	servedValue := evaluation.Evaluate(config, context, segments)
+	reason := EvaluationReasonFoundMatch
+	if servedValue.RolloutSkippedNoIdentifier {
+		reason = EvaluationReasonRolloutSkippedNoIdentifier
 	}
+	return servedConfig{
+		state: ConfigState{
+			ID:        definition.id,
+			Key:       definition.key,
+			Type:      definition.configType,
+			Value:     servedValue.Text,
+			ValueID:   servedValue.ValueID,
+			Variation: definition.variationWithID(servedValue.VariationID),
+			RuleID:    servedValue.RuleID,
+			ShareID:   servedValue.ShareID,
+		},
+		reason: reason,
+	}
+}
+
+func (definition configDefinition) variationWithID(id string) *Variation {
+	variation, found := definition.variations[id]
+	if !found {
+		return nil
+	}
+	return &variation
 }
 
 func (definition configDefinition) usesAnySegment(segments evaluation.Segments) bool {

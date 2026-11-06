@@ -23,6 +23,7 @@ type configDefinition struct {
 	key            string
 	configType     ConfigType
 	targetingRules evaluation.TargetingRules
+	variations     map[string]Variation
 }
 
 type serverPayload struct {
@@ -76,16 +77,23 @@ type wirePayload struct {
 }
 
 type wireConfig struct {
-	ID     string      `json:"id"`
-	Key    string      `json:"key"`
-	Type   string      `json:"type"`
-	Target *wireTarget `json:"target"`
+	ID         string          `json:"id"`
+	Key        string          `json:"key"`
+	Type       string          `json:"type"`
+	Variations []wireVariation `json:"variations"`
+	Target     *wireTarget     `json:"target"`
+}
+
+type wireVariation struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 type wireTarget struct {
-	Rules          []wireRule      `json:"rules"`
-	DefaultValue   json.RawMessage `json:"defaultValue"`
-	DefaultValueID string          `json:"defaultValueId"`
+	Rules              []wireRule      `json:"rules"`
+	DefaultValue       json.RawMessage `json:"defaultValue"`
+	DefaultValueID     string          `json:"defaultValueId"`
+	DefaultVariationID string          `json:"defaultVariationId"`
 }
 
 type wireRule struct {
@@ -95,15 +103,17 @@ type wireRule struct {
 	Target      string            `json:"target"`
 	Value       json.RawMessage   `json:"value"`
 	ValueID     string            `json:"valueId"`
+	VariationID string            `json:"variationId"`
 	Conditions  []json.RawMessage `json:"conditions"`
 	Percentages []wirePercentage  `json:"percentages"`
 }
 
 type wirePercentage struct {
-	ID         string          `json:"id"`
-	Percentage float64         `json:"percentage"`
-	Value      json.RawMessage `json:"value"`
-	ValueID    string          `json:"valueId"`
+	ID          string          `json:"id"`
+	Percentage  float64         `json:"percentage"`
+	Value       json.RawMessage `json:"value"`
+	ValueID     string          `json:"valueId"`
+	VariationID string          `json:"variationId"`
 }
 
 type wireCondition struct {
@@ -196,11 +206,23 @@ func parseConfig(raw json.RawMessage) (configDefinition, error) {
 		key:        wire.Key,
 		configType: ConfigType(wire.Type),
 		targetingRules: evaluation.TargetingRules{
-			DefaultValue:   textOf(wire.Target.DefaultValue),
-			DefaultValueID: wire.Target.DefaultValueID,
-			Rules:          rules,
+			DefaultValue:       textOf(wire.Target.DefaultValue),
+			DefaultValueID:     wire.Target.DefaultValueID,
+			DefaultVariationID: wire.Target.DefaultVariationID,
+			Rules:              rules,
 		},
+		variations: variationsByID(wire.Variations),
 	}, nil
+}
+
+func variationsByID(wire []wireVariation) map[string]Variation {
+	variations := make(map[string]Variation, len(wire))
+	for _, variation := range wire {
+		if variation.ID != "" {
+			variations[variation.ID] = Variation(variation)
+		}
+	}
+	return variations
 }
 
 func parseRule(wire wireRule) (evaluation.Rule, error) {
@@ -215,15 +237,6 @@ func parseRule(wire wireRule) (evaluation.Rule, error) {
 		}
 		conditions = append(conditions, condition)
 	}
-	percentages := make([]evaluation.Percentage, 0, len(wire.Percentages))
-	for _, bucket := range wire.Percentages {
-		percentages = append(percentages, evaluation.Percentage{
-			ID:         bucket.ID,
-			Percentage: bucket.Percentage,
-			Value:      textOf(bucket.Value),
-			ValueID:    bucket.ValueID,
-		})
-	}
 	return evaluation.Rule{
 		ID:          wire.ID,
 		Order:       wire.Order,
@@ -231,9 +244,27 @@ func parseRule(wire wireRule) (evaluation.Rule, error) {
 		Target:      evaluation.RuleTarget(wire.Target),
 		Value:       textOf(wire.Value),
 		ValueID:     wire.ValueID,
+		VariationID: wire.VariationID,
 		Conditions:  conditions,
-		Percentages: percentages,
+		Percentages: percentagesOf(wire.Percentages),
 	}, nil
+}
+
+func percentagesOf(wire []wirePercentage) []evaluation.Percentage {
+	if wire == nil {
+		return nil
+	}
+	percentages := make([]evaluation.Percentage, 0, len(wire))
+	for _, share := range wire {
+		percentages = append(percentages, evaluation.Percentage{
+			ID:          share.ID,
+			Percentage:  share.Percentage,
+			Value:       textOf(share.Value),
+			ValueID:     share.ValueID,
+			VariationID: share.VariationID,
+		})
+	}
+	return percentages
 }
 
 func parseCondition(raw json.RawMessage) (evaluation.Condition, error) {

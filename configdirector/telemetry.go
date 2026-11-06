@@ -36,6 +36,22 @@ type configRead struct {
 	kind       readKind
 	evaluation Evaluation
 	configType ConfigType
+	ruleID     string
+	shareID    string
+}
+
+func servedRead(kind readKind, key string, value any, config servedConfig, userContext UserContext) configRead {
+	return configRead{
+		kind:       kind,
+		evaluation: servedEvaluation(key, value, config, userContext),
+		configType: config.state.Type,
+		ruleID:     config.state.RuleID,
+		shareID:    config.state.ShareID,
+	}
+}
+
+func inCodeDefaultRead(kind readKind, key string, defaultValue any, config servedConfig, reason EvaluationReason, userContext UserContext) configRead {
+	return configRead{kind: kind, evaluation: defaultEvaluation(key, defaultValue, reason, userContext), configType: config.state.Type}
 }
 
 func (read configRead) reportsAsDocument() bool {
@@ -52,8 +68,18 @@ func (client *Client) reportRead(read configRead, defaultValue telemetry.Value, 
 		EvaluatedValueID: read.evaluation.ValueID,
 		UsedDefault:      read.evaluation.UsedDefault,
 		Reason:           string(read.evaluation.Reason),
+		RuleID:           read.ruleID,
+		ShareID:          read.shareID,
+		VariationID:      variationIDOf(read.evaluation),
 	}, telemetryContextOf(read.evaluation.UserContext))
 	client.reportEvaluation(read.evaluation)
+}
+
+func variationIDOf(evaluated Evaluation) string {
+	if evaluated.Variation == nil {
+		return ""
+	}
+	return evaluated.Variation.ID
 }
 
 func telemetryContextOf(userContext UserContext) telemetry.Context {

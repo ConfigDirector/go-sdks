@@ -75,8 +75,9 @@ not encode as JSON, or a value of any other kind, such as a pointer or a channel
 Reads behave as they do in production: `SetValue("k", true)` read with `StringValue` returns the
 in-code default value with the `type-mismatch` reason, `SetValue("k", 2.5)` read with `IntValue`
 returns the default with the `invalid-number` reason, and `SetValue("k", "")` serves the in-code
-default value with the `value-missing` reason. The `*ValueDetails` methods and `OnConfigEvaluated`
-handlers report the reason.
+default value with the `value-missing` reason. `Evaluate`, the `*ValueDetails` methods and
+`OnConfigEvaluated` handlers report the reason. A test client serves plain values, so `Variation` is
+nil on every read.
 
 ### Controls
 

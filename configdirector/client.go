@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"reflect"
+	"strings"
 	"sync"
 
 	"github.com/ConfigDirector/go-sdks/configdirector/internal/evaluation"
@@ -21,8 +22,8 @@ var ErrClientClosed = errors.New("configdirector: the client is closed")
 //
 // Every read takes an in-code default value and returns it rather than failing: a config the
 // client does not hold, a client that is not ready, or a value that cannot be read as the
-// requested type all produce the default. The *ValueDetails methods report which of those
-// happened.
+// requested type all produce the default. Evaluate and the *ValueDetails methods report which of
+// those happened.
 //
 // To learn about config state as it changes rather than on each read, register handlers with
 // OnReady, OnConfigsUpdated and OnConfigEvaluated, or watch one key with WatchBool and its
@@ -298,6 +299,35 @@ func (client *Client) JSONValueDetails(key string, target any, userContext UserC
 	return client.evaluateJSONAndReport(snapshot, key, targetValue, userContext).details(), nil
 }
 
+// Evaluate evaluates key as the type of defaultValue for userContext and returns the evaluation:
+// the value, the reason it was served, its value ID and its variation. Like every read, it reaches
+// the OnConfigEvaluated handlers and is counted in telemetry.
+//
+// defaultValue is the in-code default value, and its type decides how the value is read: a bool, a
+// string, any integer kind, a float32 or a float64, or a map, slice, array or struct for a JSON
+// document. The evaluation's Value holds that same type, and holds defaultValue when the config is
+// missing, the client is not ready, or the value does not fit that type, such as 300 read with an
+// int8 in-code default value. A JSON document decodes into a new value, so defaultValue is left as
+// it was; a map or struct takes only a JSON object, and a slice or array only a JSON array.
+//
+// The only errors are for a blank key and for a defaultValue that cannot be read this way, such as
+// nil, a pointer, a channel or a func. When it returns an error, the evaluation is empty and nothing
+// is reported.
+func (client *Client) Evaluate(key string, defaultValue any, userContext UserContext) (Evaluation, error) {
+	if strings.TrimSpace(key) == "" {
+		return Evaluation{}, errBlankConfigKey
+	}
+	reading, err := valueReadingOf(defaultValue)
+	if err != nil {
+		return Evaluation{}, err
+	}
+
+	snapshot, _ := client.heldSnapshot()
+	_, read := evaluateValue(client, snapshot, key, defaultValue, client.contextToEvaluate(userContext), reading.kind, reading.valueFrom)
+	client.reportRead(read, telemetry.ValueOf(defaultValue, read.reportsAsDocument(), ""), reflect.TypeOf(defaultValue))
+	return read.evaluation, nil
+}
+
 // AllConfigs returns the evaluated state of every config the client holds, or of the configs
 // with the given keys, sorted by key. Intended for handing state to a client SDK to hydrate
 // with; it records no evaluation in telemetry and reaches no OnConfigEvaluated handler. Empty
@@ -321,22 +351,22 @@ func readValue[T any](client *Client, key string, defaultValue T, userContext Us
 }
 
 func evaluateValueAndReport[T any](client *Client, snapshot *configSnapshot, key string, defaultValue T, supplied UserContext, valueFrom func(ConfigState) (T, EvaluationReason)) (T, Evaluation) {
-	value, read := evaluateValue(client, snapshot, key, defaultValue, client.contextToEvaluate(supplied), valueFrom)
+	value, read := evaluateValue(client, snapshot, key, defaultValue, client.contextToEvaluate(supplied), typedRead, valueFrom)
 	client.reportRead(read, telemetry.ValueOf(defaultValue, read.reportsAsDocument(), ""), reflect.TypeFor[T]())
 	return value, read.evaluation
 }
 
-func evaluateValue[T any](client *Client, snapshot *configSnapshot, key string, defaultValue T, userContext UserContext, valueFrom func(ConfigState) (T, EvaluationReason)) (T, configRead) {
-	state, reason := client.readableState(snapshot, key, userContext)
-	if reason != EvaluationReasonFoundMatch {
-		return defaultValue, configRead{kind: typedRead, evaluation: defaultEvaluation(key, defaultValue, reason, userContext), configType: state.Type}
+func evaluateValue[T any](client *Client, snapshot *configSnapshot, key string, defaultValue T, userContext UserContext, kind readKind, valueFrom func(ConfigState) (T, EvaluationReason)) (T, configRead) {
+	config := client.readableConfig(snapshot, key, userContext)
+	if !config.holdsAValue() {
+		return defaultValue, inCodeDefaultRead(kind, key, defaultValue, config, config.reason, userContext)
 	}
 
-	value, reason := valueFrom(state)
+	value, reason := valueFrom(config.state)
 	if reason != EvaluationReasonFoundMatch {
-		return defaultValue, configRead{kind: typedRead, evaluation: defaultEvaluation(key, defaultValue, reason, userContext), configType: state.Type}
+		return defaultValue, inCodeDefaultRead(kind, key, defaultValue, config, reason, userContext)
 	}
-	return value, configRead{kind: typedRead, evaluation: servedEvaluation(key, value, state.ValueID, userContext), configType: state.Type}
+	return value, servedRead(kind, key, value, config, userContext)
 }
 
 func (client *Client) evaluateJSONAndReport(snapshot *configSnapshot, key string, targetValue reflect.Value, supplied UserContext) Evaluation {
@@ -347,28 +377,29 @@ func (client *Client) evaluateJSONAndReport(snapshot *configSnapshot, key string
 }
 
 func (client *Client) evaluateJSON(snapshot *configSnapshot, key string, targetValue reflect.Value, userContext UserContext) configRead {
-	state, reason := client.readableState(snapshot, key, userContext)
-	if reason == EvaluationReasonFoundMatch {
-		reason = decodeJSONInto(state, targetValue)
+	config := client.readableConfig(snapshot, key, userContext)
+	if !config.holdsAValue() {
+		return inCodeDefaultRead(documentRead, key, targetValue.Elem().Interface(), config, config.reason, userContext)
 	}
-	if reason != EvaluationReasonFoundMatch {
-		return configRead{kind: documentRead, evaluation: defaultEvaluation(key, targetValue.Elem().Interface(), reason, userContext), configType: state.Type}
+
+	if reason := decodeJSONInto(config.state, targetValue); reason != EvaluationReasonFoundMatch {
+		return inCodeDefaultRead(documentRead, key, targetValue.Elem().Interface(), config, reason, userContext)
 	}
-	return configRead{kind: documentRead, evaluation: servedEvaluation(key, targetValue.Elem().Interface(), state.ValueID, userContext), configType: state.Type}
+	return servedRead(documentRead, key, targetValue.Elem().Interface(), config, userContext)
 }
 
-func (client *Client) readableState(snapshot *configSnapshot, key string, userContext UserContext) (ConfigState, EvaluationReason) {
+func (client *Client) readableConfig(snapshot *configSnapshot, key string, userContext UserContext) servedConfig {
 	if snapshot == nil {
-		return ConfigState{}, EvaluationReasonClientNotReady
+		return servedConfig{reason: EvaluationReasonClientNotReady}
 	}
-	state, found := snapshot.stateOf(key, client.evaluationContextFor(userContext))
+	config, found := snapshot.servedConfigOf(key, client.evaluationContextFor(userContext))
 	if !found {
-		return ConfigState{}, EvaluationReasonConfigStateMissing
+		return servedConfig{reason: EvaluationReasonConfigStateMissing}
 	}
-	if state.Value == "" {
-		return state, EvaluationReasonValueMissing
+	if config.state.Value == "" {
+		config.reason = EvaluationReasonValueMissing
 	}
-	return state, EvaluationReasonFoundMatch
+	return config
 }
 
 func (client *Client) heldSnapshot() (*configSnapshot, bool) {

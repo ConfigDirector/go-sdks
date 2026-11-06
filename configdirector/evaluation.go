@@ -5,9 +5,11 @@ package configdirector
 // bucket by ID and Kind. It is named UserContext rather than Context because Go's own
 // context.Context takes the short name.
 type UserContext struct {
-	// ID uniquely identifies the user. It decides which bucket of a percentage rollout the user
-	// falls in, so changing it can move the user to a different bucket. Leave it empty for a user
-	// without a stable identity.
+	// ID uniquely identifies the user. It decides which share of a percentage rollout the user falls
+	// in, so changing it can move the user to a different share. A context without an ID skips
+	// percentage rollouts: it is served the default targeting rule value, and the targeting rules
+	// after the rollout are not tried. For a user without a stable identity, use a session or device
+	// ID to keep them in a rollout.
 	ID string
 
 	// Kind is the kind of entity the context represents, such as device, organization or tenant.
@@ -38,6 +40,11 @@ const (
 	// EvaluationReasonFoundMatch means the config was found and its value read as the requested
 	// type.
 	EvaluationReasonFoundMatch EvaluationReason = "found-match"
+
+	// EvaluationReasonRolloutSkippedNoIdentifier means the targeting rules reached a percentage
+	// rollout and the context has no ID to place it in a share, so the default targeting rule value
+	// was served. Its UsedDefault is false: the value comes from ConfigDirector.
+	EvaluationReasonRolloutSkippedNoIdentifier EvaluationReason = "rollout-skipped-no-identifier"
 
 	// EvaluationReasonConfigStateMissing means the client holds no config with the requested key.
 	EvaluationReasonConfigStateMissing EvaluationReason = "config-state-missing"
@@ -74,6 +81,20 @@ type EvaluationDetails struct {
 
 	// UsedDefault is true when the read returned the in-code default value.
 	UsedDefault bool
+
+	// Variation is the variation that was served. Nil when the config has no variations or the
+	// in-code default value was returned.
+	Variation *Variation
+}
+
+// Variation is one of the values a config can serve, such as the control or a treatment of an
+// experiment.
+type Variation struct {
+	// ID identifies the variation in ConfigDirector. It stays the same when the variation is renamed.
+	ID string
+
+	// Name is the variation's name. Empty when it has none.
+	Name string
 }
 
 // ConfigType is the type a config was declared with in the ConfigDirector dashboard.
@@ -121,10 +142,22 @@ type ConfigState struct {
 
 	// ValueID identifies the served value in ConfigDirector.
 	ValueID string
+
+	// Variation is the variation that was served. Nil when the config has no variations.
+	Variation *Variation
+
+	// RuleID identifies the targeting rule whose percentage rollout served the value. Empty when no
+	// percentage rollout did.
+	RuleID string
+
+	// ShareID identifies the share of the percentage rollout that served the value. Empty when no
+	// percentage rollout did.
+	ShareID string
 }
 
-// Evaluation is one evaluation of a config: what was asked for and what came back. It is handed
-// to OnConfigEvaluated handlers for every read and every watch that fires.
+// Evaluation is one evaluation of a config: what was asked for and what came back. Evaluate
+// returns it, and it is handed to OnConfigEvaluated handlers for every read and every watch that
+// fires.
 type Evaluation struct {
 	// Key is the config's key.
 	Key string
@@ -147,10 +180,14 @@ type Evaluation struct {
 	// UserContext is the context the config was evaluated for: the one supplied, or UserContext{}
 	// when the supplied context was ignored for an invalid Kind.
 	UserContext UserContext
+
+	// Variation is the variation that was served. Nil when the config has no variations or the
+	// in-code default value was returned.
+	Variation *Variation
 }
 
-func servedEvaluation(key string, value any, valueID string, userContext UserContext) Evaluation {
-	return Evaluation{Key: key, Value: value, Reason: EvaluationReasonFoundMatch, ValueID: valueID, UserContext: userContext}
+func servedEvaluation(key string, value any, config servedConfig, userContext UserContext) Evaluation {
+	return Evaluation{Key: key, Value: value, Reason: config.reason, ValueID: config.state.ValueID, UserContext: userContext, Variation: config.state.Variation}
 }
 
 func defaultEvaluation(key string, defaultValue any, reason EvaluationReason, userContext UserContext) Evaluation {
@@ -162,5 +199,6 @@ func (evaluated Evaluation) details() EvaluationDetails {
 		Reason:      evaluated.Reason,
 		ValueID:     evaluated.ValueID,
 		UsedDefault: evaluated.UsedDefault,
+		Variation:   evaluated.Variation,
 	}
 }

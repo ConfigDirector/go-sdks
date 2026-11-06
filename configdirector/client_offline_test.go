@@ -54,6 +54,16 @@ func TestAnOfflineValueEvaluatesAsAFoundMatchWithoutAValueID(t *testing.T) {
 	require.Equal(t, foundMatch(""), details)
 }
 
+func TestEvaluateOfAnOfflineValueHasNoVariation(t *testing.T) {
+	t.Parallel()
+	client := newClient(t, offlineValues(map[string]any{"greeting": "hello"}))
+
+	evaluated, err := client.Evaluate("greeting", "fallback", noUser)
+
+	require.NoError(t, err)
+	require.Equal(t, configdirector.Evaluation{Key: "greeting", Value: "hello", Reason: configdirector.EvaluationReasonFoundMatch}, evaluated)
+}
+
 func offlineFile(t *testing.T, document string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "flags.json")

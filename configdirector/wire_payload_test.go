@@ -9,6 +9,21 @@ const (
 	environmentID        = "6f1d2a3b-0000-4000-8000-00000000e001"
 	projectID            = "6f1d2a3b-0000-4000-8000-00000000a001"
 	betaTestersSegmentID = "segment-beta-testers"
+
+	experimentConfigID   = "11111111-1111-4111-8111-111111111111"
+	rolloutRuleID        = "22222222-2222-4222-8222-222222222222"
+	controlShareID       = "55555555-5555-4555-8555-555555555555"
+	treatmentShareID     = "66666666-6666-4666-8666-666666666666"
+	controlVariationID   = "77777777-7777-4777-8777-777777777777"
+	treatmentVariationID = "88888888-8888-4888-8888-888888888888"
+	unnamedVariationID   = "99999999-9999-4999-8999-999999999999"
+
+	controlText   = "Start free trial"
+	treatmentText = "Try it free"
+	unnamedText   = "Get started"
+
+	controlValueID   = "value-control"
+	treatmentValueID = "value-treatment"
 )
 
 type payloadBuilder struct {
@@ -161,11 +176,11 @@ func contextKindIsOneOf(contextKinds ...string) map[string]any {
 }
 
 func evenSplitConfig(key string) map[string]any {
-	rolledOut := configOf(key, "string", "NONE", percentageRule(key+"-split", bucket("b0", 50, "0"), bucket("b1", 50, "1")))
+	rolledOut := configOf(key, "string", "NONE", percentageRule(key+"-split", share("b0", 50, "0"), share("b1", 50, "1")))
 	return withField(rolledOut, "id", "11111111-1111-4111-8111-111111111111")
 }
 
-func percentageRule(id string, buckets ...map[string]any) map[string]any {
+func percentageRule(id string, shares ...map[string]any) map[string]any {
 	return map[string]any{
 		"id":          id,
 		"order":       0,
@@ -174,11 +189,11 @@ func percentageRule(id string, buckets ...map[string]any) map[string]any {
 		"value":       nil,
 		"valueId":     nil,
 		"conditions":  []map[string]any{},
-		"percentages": buckets,
+		"percentages": shares,
 	}
 }
 
-func bucket(id string, percentage float64, value string) map[string]any {
+func share(id string, percentage float64, value string) map[string]any {
 	return map[string]any{"id": id, "percentage": percentage, "value": value, "valueId": "value-" + id}
 }
 
@@ -195,6 +210,40 @@ func withField(object map[string]any, name string, value any) map[string]any {
 	extended := maps.Clone(object)
 	extended[name] = value
 	return extended
+}
+
+func experimentConfig(key string, rules ...map[string]any) map[string]any {
+	config := configOf(key, "string", controlText, rules...)
+	target := maps.Clone(config["target"].(map[string]any))
+	target["defaultValueId"] = controlValueID
+	target["defaultVariationId"] = controlVariationID
+	config["target"] = target
+	config["id"] = experimentConfigID
+	config["variations"] = []any{
+		map[string]any{"id": controlVariationID, "name": "control", "value": controlText},
+		map[string]any{"id": treatmentVariationID, "name": "treatment", "value": treatmentText},
+		map[string]any{"id": unnamedVariationID, "name": nil, "value": unnamedText},
+	}
+	return config
+}
+
+func evenExperimentRollout() map[string]any {
+	return percentageRule(rolloutRuleID, controlShare(), treatmentShare())
+}
+
+func controlShare() map[string]any {
+	return map[string]any{"id": controlShareID, "percentage": 50.0, "value": controlText, "valueId": controlValueID, "variationId": controlVariationID}
+}
+
+func treatmentShare() map[string]any {
+	return map[string]any{"id": treatmentShareID, "percentage": 50.0, "value": treatmentText, "valueId": treatmentValueID, "variationId": treatmentVariationID}
+}
+
+func treatmentRule(conditions ...map[string]any) map[string]any {
+	rule := valueRule("treatment-rule", 0, treatmentText, conditions...)
+	rule["valueId"] = treatmentValueID
+	rule["variationId"] = treatmentVariationID
+	return rule
 }
 
 func standardPayload() payloadBuilder {

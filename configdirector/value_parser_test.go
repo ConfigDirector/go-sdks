@@ -306,6 +306,9 @@ func FuzzParseValue(f *testing.F) {
 	f.Add("null")
 	f.Add(`{"Max":"x"}`)
 	f.Add(`{"Max":9,"Min":"x"}`)
+	f.Add("300")
+	f.Add("-1")
+	f.Add("1e300")
 
 	f.Fuzz(func(t *testing.T, text string) {
 		boolean, booleanReason := boolFrom(stateWith(ConfigTypeBoolean, text))
@@ -341,6 +344,17 @@ func FuzzParseValue(f *testing.F) {
 		limits := untouchedLimits
 		if decodeJSONInto(stateWith(ConfigTypeJSON, text), reflect.ValueOf(&limits)) != EvaluationReasonFoundMatch {
 			require.Equal(t, untouchedLimits, limits)
+		}
+
+		for _, defaultValue := range []any{true, "text", 1, int8(1), uint8(1), float32(1), 1.5, map[string]any{}, []string{}, [2]int{}, untouchedLimits} {
+			reading, err := valueReadingOf(defaultValue)
+			require.NoError(t, err)
+			value, reason := reading.valueFrom(stateWith(ConfigTypeCustom, text))
+			if reason == EvaluationReasonFoundMatch {
+				require.IsType(t, defaultValue, value)
+			} else {
+				require.Nil(t, value)
+			}
 		}
 	})
 }

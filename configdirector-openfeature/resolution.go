@@ -10,7 +10,9 @@ import (
 func resolutionDetailFor(key string, details configdirector.EvaluationDetails) openfeature.ProviderResolutionDetail {
 	switch details.Reason {
 	case configdirector.EvaluationReasonFoundMatch:
-		return openfeature.ProviderResolutionDetail{Reason: openfeature.TargetingMatchReason, Variant: details.ValueID}
+		return openfeature.ProviderResolutionDetail{Reason: openfeature.TargetingMatchReason, Variant: variantOf(details)}
+	case configdirector.EvaluationReasonRolloutSkippedNoIdentifier:
+		return openfeature.ProviderResolutionDetail{Reason: openfeature.DefaultReason, Variant: variantOf(details)}
 	case configdirector.EvaluationReasonValueMissing:
 		return openfeature.ProviderResolutionDetail{Reason: openfeature.DefaultReason}
 	case configdirector.EvaluationReasonConfigStateMissing:
@@ -27,6 +29,13 @@ func resolutionDetailFor(key string, details configdirector.EvaluationDetails) o
 	}
 }
 
+func variantOf(details configdirector.EvaluationDetails) string {
+	if details.Variation != nil && details.Variation.Name != "" {
+		return details.Variation.Name
+	}
+	return details.ValueID
+}
+
 func typeMismatchDetail(key string, explanation string) openfeature.ProviderResolutionDetail {
 	return resolutionErrorDetail(openfeature.NewTypeMismatchResolutionError(fmt.Sprintf("The value of %q does not match the requested type (%s).", key, explanation)))
 }
@@ -35,7 +44,7 @@ func resolutionDetailForAnUnknownReason(key string, details configdirector.Evalu
 	if details.UsedDefault {
 		return resolutionErrorDetail(openfeature.NewGeneralResolutionError(fmt.Sprintf("The read of %q returned its default value (%s).", key, details.Reason)))
 	}
-	return openfeature.ProviderResolutionDetail{Reason: openfeature.UnknownReason, Variant: details.ValueID}
+	return openfeature.ProviderResolutionDetail{Reason: openfeature.UnknownReason, Variant: variantOf(details)}
 }
 
 func resolutionErrorDetail(resolutionError openfeature.ResolutionError) openfeature.ProviderResolutionDetail {

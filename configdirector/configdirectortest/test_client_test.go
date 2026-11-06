@@ -194,6 +194,42 @@ func TestAServedValueReportsAFoundMatch(t *testing.T) {
 	require.NotEmpty(t, details.ValueID)
 }
 
+func TestEvaluateOfATestValueIsAFoundMatchWithoutAVariation(t *testing.T) {
+	t.Parallel()
+	testClient := newTestClient(t, map[string]any{"new-checkout": true})
+
+	evaluated, err := testClient.Client().Evaluate("new-checkout", false, noUser)
+
+	require.NoError(t, err)
+	require.Equal(t, configdirector.Evaluation{
+		Key:     "new-checkout",
+		Value:   true,
+		Reason:  configdirector.EvaluationReasonFoundMatch,
+		ValueID: "test-value:new-checkout",
+	}, evaluated)
+}
+
+func TestEvaluateReadsATestValueAboveTheInt64Range(t *testing.T) {
+	t.Parallel()
+	testClient := newTestClient(t, map[string]any{"big": uint64(1 << 63)})
+
+	evaluated, err := testClient.Client().Evaluate("big", uint64(7), noUser)
+
+	require.NoError(t, err)
+	require.Equal(t, uint64(1<<63), evaluated.Value)
+}
+
+func TestAContextWithoutAnIDIsServedATestValueWithAFoundMatch(t *testing.T) {
+	t.Parallel()
+	testClient := newTestClient(t, map[string]any{"new-checkout": true})
+
+	value, details := testClient.Client().BoolValueDetails("new-checkout", false, noUser)
+
+	require.True(t, value)
+	require.Equal(t, configdirector.EvaluationReasonFoundMatch, details.Reason)
+	require.Nil(t, details.Variation)
+}
+
 func TestABoolReadAsAStringReturnsTheDefaultWithTypeMismatch(t *testing.T) {
 	t.Parallel()
 	client := newTestClient(t, map[string]any{"new-checkout": true}).Client()

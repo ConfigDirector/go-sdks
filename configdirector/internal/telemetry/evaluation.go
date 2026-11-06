@@ -27,6 +27,10 @@ type Evaluation struct {
 
 	// Reason says why the read produced the value it did.
 	Reason string
+
+	RuleID      string
+	ShareID     string
+	VariationID string
 }
 
 // Context is the user context a config was evaluated for. Only a context with an ID that is not
@@ -90,6 +94,9 @@ func (event evaluatedConfigEvent) wire() wireEvaluatedConfigEvent {
 		EvaluatedValueID: event.evaluation.EvaluatedValueID,
 		UsedDefault:      event.evaluation.UsedDefault,
 		EvaluationReason: event.evaluation.Reason,
+		RuleID:           event.evaluation.RuleID,
+		ShareID:          event.evaluation.ShareID,
+		VariationID:      event.evaluation.VariationID,
 	}
 }
 
@@ -104,4 +111,7 @@ type wireEvaluatedConfigEvent struct {
 	EvaluatedValueID string    `json:"evaluatedValueId,omitempty"`
 	UsedDefault      bool      `json:"usedDefault"`
 	EvaluationReason string    `json:"evaluationReason"`
+	RuleID           string    `json:"ruleId,omitempty"`
+	ShareID          string    `json:"shareId,omitempty"`
+	VariationID      string    `json:"variationId,omitempty"`
 }

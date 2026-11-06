@@ -65,6 +65,9 @@ type evaluatedConfigEvent struct {
 	EvaluatedValueID *string        `json:"evaluatedValueId"`
 	UsedDefault      bool           `json:"usedDefault"`
 	EvaluationReason string         `json:"evaluationReason"`
+	RuleID           *string        `json:"ruleId"`
+	ShareID          *string        `json:"shareId"`
+	VariationID      *string        `json:"variationId"`
 }
 
 type telemetryValue struct {
@@ -151,6 +154,158 @@ func TestTwoIdenticalReadsArriveAsOneEventWithACountOfTwo(t *testing.T) {
 		UsedDefault:      false,
 		EvaluationReason: "found-match",
 	}, aggregated.Event)
+}
+
+func TestAReadServedByARolloutReportsItsRuleShareAndVariation(t *testing.T) {
+	t.Parallel()
+	client, server := newReadyClientAgainst(t, fullPayload(experimentConfig("checkout-cta", evenExperimentRollout())))
+
+	client.StringValue("checkout-cta", "fallback", userInTheTreatmentShare)
+
+	require.Equal(t, evaluatedConfigEvent{
+		ContextID:        new("u582"),
+		ContextKind:      new("user"),
+		Key:              "checkout-cta",
+		Type:             new("string"),
+		DefaultValue:     inline("fallback"),
+		RequestedType:    "string",
+		EvaluatedValue:   inline(treatmentText),
+		EvaluatedValueID: new(treatmentValueID),
+		UsedDefault:      false,
+		EvaluationReason: "found-match",
+		RuleID:           new(rolloutRuleID),
+		ShareID:          new(treatmentShareID),
+		VariationID:      new(treatmentVariationID),
+	}, onlyEventOf(t, reportAfterClosing(t, client, server)).Event)
+}
+
+func TestAReadServedByARuleWithASingleValueReportsOnlyItsVariation(t *testing.T) {
+	t.Parallel()
+	client, server := newReadyClientAgainst(t, fullPayload(experimentConfig("checkout-cta", treatmentRule())))
+
+	client.StringValue("checkout-cta", "fallback", identifiedUser)
+
+	event := onlyEventOf(t, reportAfterClosing(t, client, server)).Event
+	require.Equal(t, new(treatmentVariationID), event.VariationID)
+	require.Nil(t, event.RuleID)
+	require.Nil(t, event.ShareID)
+}
+
+func TestAReadOfAConfigWithoutVariationsReportsNoRuleShareOrVariation(t *testing.T) {
+	t.Parallel()
+	client, server := newReadyClientAgainst(t, standardPayload())
+
+	client.BoolValue("new-checkout", false, identifiedUser)
+
+	event := onlyEventOf(t, reportAfterClosing(t, client, server)).Event
+	require.Nil(t, event.RuleID)
+	require.Nil(t, event.ShareID)
+	require.Nil(t, event.VariationID)
+}
+
+func TestAReadThatFellBackToTheInCodeDefaultValueReportsNoRuleShareOrVariation(t *testing.T) {
+	t.Parallel()
+	client, server := newReadyClientAgainst(t, fullPayload(experimentConfig("checkout-cta", evenExperimentRollout())))
+
+	client.BoolValue("checkout-cta", true, userInTheTreatmentShare)
+
+	event := onlyEventOf(t, reportAfterClosing(t, client, server)).Event
+	require.True(t, event.UsedDefault)
+	require.Equal(t, "invalid-boolean", event.EvaluationReason)
+	require.Nil(t, event.RuleID)
+	require.Nil(t, event.ShareID)
+	require.Nil(t, event.VariationID)
+}
+
+func TestASkippedRolloutReportsItsReasonAndTheVariationWithoutARuleOrShare(t *testing.T) {
+	t.Parallel()
+	client, server := newReadyClientAgainst(t, fullPayload(experimentConfig("checkout-cta", evenExperimentRollout())))
+
+	client.StringValue("checkout-cta", "fallback", noUser)
+
+	require.Equal(t, evaluatedConfigEvent{
+		Key:              "checkout-cta",
+		Type:             new("string"),
+		DefaultValue:     inline("fallback"),
+		RequestedType:    "string",
+		EvaluatedValue:   inline(controlText),
+		EvaluatedValueID: new(controlValueID),
+		UsedDefault:      false,
+		EvaluationReason: "rollout-skipped-no-identifier",
+		VariationID:      new(controlVariationID),
+	}, onlyEventOf(t, reportAfterClosing(t, client, server)).Event)
+}
+
+func TestAnAnonymousContextPlacedInAShareReportsTheIDsWithoutAContext(t *testing.T) {
+	t.Parallel()
+	client, server := newReadyClientAgainst(t, fullPayload(experimentConfig("checkout-cta", evenExperimentRollout())))
+
+	client.StringValue("checkout-cta", "fallback", configdirector.UserContext{ID: "u582", Anonymous: true})
+
+	event := onlyEventOf(t, reportAfterClosing(t, client, server)).Event
+	require.Nil(t, event.ContextID)
+	require.Equal(t, new(rolloutRuleID), event.RuleID)
+	require.Equal(t, new(treatmentShareID), event.ShareID)
+	require.Equal(t, new(treatmentVariationID), event.VariationID)
+}
+
+func TestReadsServedByOneShareArriveAsOneEventWithACountOfTwo(t *testing.T) {
+	t.Parallel()
+	client, server := newReadyClientAgainst(t, fullPayload(experimentConfig("checkout-cta", evenExperimentRollout())))
+
+	client.StringValue("checkout-cta", "fallback", userInTheTreatmentShare)
+	client.StringValue("checkout-cta", "fallback", userInTheTreatmentShare)
+
+	aggregated := onlyEventOf(t, reportAfterClosing(t, client, server))
+	require.Equal(t, 2, aggregated.Count)
+	require.Equal(t, new(treatmentShareID), aggregated.Event.ShareID)
+}
+
+func TestReadsServedTheSameValueByDifferentSharesArriveAsSeparateEvents(t *testing.T) {
+	t.Parallel()
+	secondShare := withField(controlShare(), "id", treatmentShareID)
+	client, server := newReadyClientAgainst(t, fullPayload(experimentConfig("checkout-cta", percentageRule(rolloutRuleID, controlShare(), secondShare))))
+
+	client.StringValue("checkout-cta", "fallback", configdirector.UserContext{ID: "user-1", Anonymous: true})
+	client.StringValue("checkout-cta", "fallback", configdirector.UserContext{ID: "u582", Anonymous: true})
+
+	events := eventsOf(reportAfterClosing(t, client, server))
+	require.Len(t, events, 2)
+	require.Equal(t, new(controlShareID), events[0].Event.ShareID)
+	require.Equal(t, new(treatmentShareID), events[1].Event.ShareID)
+}
+
+func TestReadsServedTheSameValueByDifferentRulesArriveAsSeparateEvents(t *testing.T) {
+	t.Parallel()
+	onlyShare := withField(controlShare(), "percentage", 100.0)
+	firstRollout := withField(withField(percentageRule("rollout-first", onlyShare), "type", "conditional"), "conditions", []map[string]any{identifierEquals("user-1")})
+	secondRollout := withField(withField(percentageRule("rollout-second", onlyShare), "type", "conditional"), "conditions", []map[string]any{identifierEquals("u582")})
+	secondRollout["order"] = 1
+	client, server := newReadyClientAgainst(t, fullPayload(experimentConfig("checkout-cta", firstRollout, secondRollout)))
+
+	client.StringValue("checkout-cta", "fallback", configdirector.UserContext{ID: "user-1", Anonymous: true})
+	client.StringValue("checkout-cta", "fallback", configdirector.UserContext{ID: "u582", Anonymous: true})
+
+	events := eventsOf(reportAfterClosing(t, client, server))
+	require.Len(t, events, 2)
+	require.Equal(t, new("rollout-first"), events[0].Event.RuleID)
+	require.Equal(t, new("rollout-second"), events[1].Event.RuleID)
+}
+
+func TestReadsServedTheSameValueWithDifferentVariationsArriveAsSeparateEvents(t *testing.T) {
+	t.Parallel()
+	firstRule := withField(treatmentRule(identifierEquals("user-1")), "variationId", controlVariationID)
+	secondRule := withField(treatmentRule(identifierEquals("u582")), "variationId", treatmentVariationID)
+	secondRule["order"] = 1
+	client, server := newReadyClientAgainst(t, fullPayload(experimentConfig("checkout-cta", firstRule, secondRule)))
+
+	client.StringValue("checkout-cta", "fallback", configdirector.UserContext{ID: "user-1", Anonymous: true})
+	client.StringValue("checkout-cta", "fallback", configdirector.UserContext{ID: "u582", Anonymous: true})
+
+	events := eventsOf(reportAfterClosing(t, client, server))
+	require.Len(t, events, 2)
+	require.Equal(t, new(controlVariationID), events[0].Event.VariationID)
+	require.Equal(t, new(treatmentVariationID), events[1].Event.VariationID)
 }
 
 func TestReadsThatDifferArriveAsSeparateEventsInTheOrderTheyWereMade(t *testing.T) {

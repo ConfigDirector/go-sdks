@@ -66,11 +66,14 @@ offlineMode := client.Boolean(ctx, "offline-mode", false, device)
 
 A kind has 1 to 64 characters, using only lowercase letters, digits, `-` and `_`. A `kind` inside `traits` is an ordinary trait. When the kind is invalid the whole context is ignored: the evaluation still resolves successfully, to the value for no context, and the SDK logs an error.
 
+A context with neither a targeting key nor an `id` attribute skips percentage rollouts: the flag resolves to the default targeting rule value, and the targeting rules after the rollout are not tried. Give an anonymous context a stable targeting key, such as a session ID, to keep it in a rollout.
+
 ## Evaluation details
 
 | Outcome | `Reason` | `ErrorCode` |
 |---|---|---|
-| A value was evaluated | `TARGETING_MATCH`, with the value's id as the `Variant` | |
+| A value was evaluated | `TARGETING_MATCH`, with the variation's name as the `Variant` when it has one, otherwise the value's id | |
+| A percentage rollout was skipped because the context has no targeting key or `id` | `DEFAULT`, with the `Variant` of the default targeting rule value | |
 | The config has no value | `DEFAULT` | |
 | No config has that key | `ERROR` | `FLAG_NOT_FOUND` |
 | The value does not match the requested type | `ERROR` | `TYPE_MISMATCH` |

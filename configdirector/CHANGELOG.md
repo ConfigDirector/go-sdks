@@ -9,6 +9,42 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- `Evaluate(key, defaultValue, userContext)` on the client reads a config as the type of
+  `defaultValue` and returns the `Evaluation`: the value, the reason it was served, its value ID and
+  its variation. `Value` holds the type of `defaultValue`, which is a `bool`, a `string`, any integer
+  kind, a `float32` or `float64`, or a map, slice, array or struct for a JSON document. Like every
+  read, it reaches `OnConfigEvaluated` handlers and is counted in telemetry. It returns an error for
+  a blank key and for an in-code default value it cannot read, such as `nil`, a pointer, a channel
+  or a func.
+- `Evaluation.Variation` and `EvaluationDetails.Variation`, on `Evaluate`, `OnConfigEvaluated` and
+  the `*ValueDetails` reads, and the new `Variation` type: the `ID` and `Name` of the variation that
+  was served. It is nil when the config has no variations or the in-code default value is returned,
+  and an unnamed variation has an empty `Name`. A test client and offline mode serve plain values,
+  so it is nil on their reads.
+- `ConfigState.Variation`, `RuleID` and `ShareID` on each `AllConfigs` entry: the variation served
+  when the config has variations, and the rule and share of the percentage rollout that served the
+  value. State you encode with `encoding/json` carries them too, under those field names.
+- The evaluation counts the SDK sends to ConfigDirector now say which variation was served, and which
+  percentage rollout and share served it, so ConfigDirector can count the contexts each variation of
+  an experiment reached.
+
+### Changed
+
+- A context without an `ID` now skips percentage rollouts. Reads, `Evaluate`, watches and `AllConfigs`
+  serve it the default targeting rule value, and the targeting rules after the rollout are not tried.
+  This includes `UserContext{}` and a context ignored for an invalid `Kind`. `Evaluate`, the
+  `*ValueDetails` reads and `OnConfigEvaluated` report it with the new reason
+  `EvaluationReasonRolloutSkippedNoIdentifier` and `UsedDefault` false. Before, every context without
+  an `ID` was served the rollout's first share wider than 0%. Give an anonymous context a stable `ID`,
+  such as a session or device ID, to keep it in a rollout. A rule that serves a single value still
+  applies to a context without an `ID`.
+- `Evaluation`, `EvaluationDetails` and `ConfigState` have new fields, so code that builds one of them
+  without field names no longer compiles; add the field names. `==` on two `EvaluationDetails` or
+  two `ConfigState` values compares `Variation` as a pointer, so two reads of the same variation
+  compare unequal; compare `Variation.ID` instead.
+
 ## [0.4.0] - 2026-10-24
 
 ### Added

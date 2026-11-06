@@ -2,7 +2,6 @@ package evaluation
 
 const (
 	percentageSeed              = 0x397832987
-	percentageWithoutIdentifier = 0.0
 	percentageReachableBuckets  = 1000
 	percentageBucketsPerPercent = 10
 )
@@ -19,20 +18,13 @@ func percentageInput(configID string, context Context) []byte {
 	return []byte(input)
 }
 
-func assignedPercentage(configID string, context Context) float64 {
-	if context.Identifier == "" {
-		return percentageWithoutIdentifier
-	}
-	return hashedPercentage(configID, context)
-}
-
-func bucketFor(percentages []Percentage, assigned float64) (Percentage, bool) {
+func shareFor(percentages []Percentage, assigned float64) (Percentage, bool) {
 	total := 0.0
-	for _, bucket := range percentages {
-		if assigned < total+bucket.Percentage {
-			return bucket, true
+	for _, share := range percentages {
+		if assigned < total+share.Percentage {
+			return share, true
 		}
-		total += bucket.Percentage
+		total += share.Percentage
 	}
 	return Percentage{}, false
 }

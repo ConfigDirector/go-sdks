@@ -37,7 +37,11 @@ const (
 // attribute holding a map[string]any becomes Traits; and a boolean "anonymous" attribute becomes
 // Anonymous. A "kind" inside "traits" is an ordinary trait. An evaluation whose context has an
 // invalid kind still resolves successfully, to the value for no context, and the SDK logs the
-// error.
+// error. A context with neither a targeting key nor an "id" attribute skips percentage rollouts: it
+// resolves to the default targeting rule value with the reason DEFAULT.
+//
+// A resolved value's variant is the name of the variation that was served, or the value's id for a
+// config without variations or an unnamed variation.
 //
 // If the first config state does not arrive within the connection timeout, or ConfigDirector
 // rejects the SDK key, initialization fails with a *openfeature.ProviderInitError whose ErrorCode

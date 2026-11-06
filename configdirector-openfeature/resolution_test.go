@@ -24,6 +24,44 @@ func TestAMatchIsATargetingMatchWithTheValueIDAsItsVariant(t *testing.T) {
 	require.Equal(t, openfeature.ProviderResolutionDetail{Reason: openfeature.TargetingMatchReason, Variant: "value-1"}, detail)
 }
 
+func TestAMatchOnANamedVariationHasTheVariationNameAsItsVariant(t *testing.T) {
+	t.Parallel()
+	details := servedWith(configdirector.EvaluationReasonFoundMatch)
+	details.Variation = &configdirector.Variation{ID: "variation-1", Name: "treatment"}
+
+	detail := resolutionDetailFor("greeting", details)
+
+	require.Equal(t, openfeature.ProviderResolutionDetail{Reason: openfeature.TargetingMatchReason, Variant: "treatment"}, detail)
+}
+
+func TestAMatchOnAnUnnamedVariationHasTheValueIDAsItsVariant(t *testing.T) {
+	t.Parallel()
+	details := servedWith(configdirector.EvaluationReasonFoundMatch)
+	details.Variation = &configdirector.Variation{ID: "variation-1", Name: ""}
+
+	detail := resolutionDetailFor("greeting", details)
+
+	require.Equal(t, openfeature.ProviderResolutionDetail{Reason: openfeature.TargetingMatchReason, Variant: "value-1"}, detail)
+}
+
+func TestASkippedRolloutResolvesWithTheDefaultReasonAndTheVariationNameAsItsVariant(t *testing.T) {
+	t.Parallel()
+	details := servedWith(configdirector.EvaluationReasonRolloutSkippedNoIdentifier)
+	details.Variation = &configdirector.Variation{ID: "variation-1", Name: "control"}
+
+	detail := resolutionDetailFor("greeting", details)
+
+	require.Equal(t, openfeature.ProviderResolutionDetail{Reason: openfeature.DefaultReason, Variant: "control"}, detail)
+}
+
+func TestASkippedRolloutWithoutAVariationHasTheValueIDAsItsVariant(t *testing.T) {
+	t.Parallel()
+
+	detail := resolutionDetailFor("greeting", servedWith(configdirector.EvaluationReasonRolloutSkippedNoIdentifier))
+
+	require.Equal(t, openfeature.ProviderResolutionDetail{Reason: openfeature.DefaultReason, Variant: "value-1"}, detail)
+}
+
 func TestAConfigWithoutAValueResolvesWithTheDefaultReasonAndNoError(t *testing.T) {
 	t.Parallel()
 
@@ -103,4 +141,14 @@ func TestAServedValueForAReasonThisProviderDoesNotKnowKeepsItsVariant(t *testing
 	detail := resolutionDetailFor("greeting", servedWith("reason-of-a-newer-sdk"))
 
 	require.Equal(t, openfeature.ProviderResolutionDetail{Reason: openfeature.UnknownReason, Variant: "value-1"}, detail)
+}
+
+func TestAServedValueForAReasonThisProviderDoesNotKnowHasTheVariationNameAsItsVariant(t *testing.T) {
+	t.Parallel()
+	details := servedWith("reason-of-a-newer-sdk")
+	details.Variation = &configdirector.Variation{ID: "variation-1", Name: "treatment"}
+
+	detail := resolutionDetailFor("greeting", details)
+
+	require.Equal(t, openfeature.ProviderResolutionDetail{Reason: openfeature.UnknownReason, Variant: "treatment"}, detail)
 }
