@@ -9,6 +9,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-06
+
 ### Added
 
 - The provider now implements OpenFeature's tracking. `client.Track(ctx, eventName, evaluationContext,
@@ -43,6 +45,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   targeting rules after the rollout are not tried. Before, every such context was served the rollout's
   first share wider than 0%. Give an anonymous context a stable targeting key, such as a session ID,
   to keep it in a rollout. A rule that serves a single value still applies to a context without one.
+- Requires `configdirector` 0.5.0 or later, which adds tracked events and variations.
 
 ### Fixed
 
