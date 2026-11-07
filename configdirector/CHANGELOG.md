@@ -9,6 +9,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-07
+
 ### Fixed
 
 - A context without an `ID` is now served by the targeting rules after a percentage rollout it
