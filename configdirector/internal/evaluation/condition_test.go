@@ -30,6 +30,10 @@ func planIs(plan string) AttributeCondition {
 	return textCondition("traits", "/plan", "equals", plan)
 }
 
+func appVersionAtLeast(version string) AttributeCondition {
+	return AttributeCondition{ID: "condition", Attribute: "appVersion", Operator: ">=", TargetType: "semver", TargetValues: []string{version}}
+}
+
 func acmeSegment(groups ...[]AttributeCondition) Segments {
 	return Segments{acmeSegmentID: Segment{Groups: groups}}
 }

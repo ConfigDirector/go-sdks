@@ -191,13 +191,29 @@ func TestASkippedRolloutWithoutVariationsHasTheSkippedReason(t *testing.T) {
 	}, details)
 }
 
-func TestASkippedRolloutDoesNotTryLaterRules(t *testing.T) {
+func TestAContextWithoutAnIDIsServedTheRuleAfterASkippedRollout(t *testing.T) {
 	t.Parallel()
 	later := treatmentRule()
 	later["order"] = 1
 	client := newReadyClientServing(t, experimentConfig("checkout-cta", evenExperimentRollout(), later))
 
 	value, details := client.StringValueDetails("checkout-cta", "fallback", noUser)
+
+	require.Equal(t, treatmentText, value)
+	require.Equal(t, configdirector.EvaluationDetails{
+		Reason:    configdirector.EvaluationReasonFoundMatch,
+		ValueID:   treatmentValueID,
+		Variation: &treatmentVariation,
+	}, details)
+}
+
+func TestAContextWithoutAnIDMatchingNoRuleAfterASkippedRolloutKeepsTheSkippedReason(t *testing.T) {
+	t.Parallel()
+	later := treatmentRule(attributeCondition("traits", "/plan", "equals", "text", "pro"))
+	later["order"] = 1
+	client := newReadyClientServing(t, experimentConfig("checkout-cta", evenExperimentRollout(), later))
+
+	value, details := client.StringValueDetails("checkout-cta", "fallback", configdirector.UserContext{Traits: map[string]any{"plan": "free"}})
 
 	require.Equal(t, controlText, value)
 	require.Equal(t, skippedRollout(), details)
@@ -271,7 +287,7 @@ func TestARolloutWhosePayloadHasNoShareListFallsThroughForAContextWithoutAnID(t 
 	require.Equal(t, configdirector.EvaluationReasonFoundMatch, details.Reason)
 }
 
-func TestARolloutWhosePayloadHasAnEmptyShareListIsSkippedForAContextWithoutAnID(t *testing.T) {
+func TestARolloutWhosePayloadHasAnEmptyShareListIsSkippedForAContextWithoutAnIDAndTheNextRuleIsTried(t *testing.T) {
 	t.Parallel()
 	later := treatmentRule()
 	later["order"] = 1
@@ -281,8 +297,8 @@ func TestARolloutWhosePayloadHasAnEmptyShareListIsSkippedForAContextWithoutAnID(
 
 	value, details := client.StringValueDetails("checkout-cta", "fallback", noUser)
 
-	require.Equal(t, controlText, value)
-	require.Equal(t, skippedRollout(), details)
+	require.Equal(t, treatmentText, value)
+	require.Equal(t, configdirector.EvaluationReasonFoundMatch, details.Reason)
 }
 
 func TestAllConfigsCarriesTheVariationRuleAndShareOfARollout(t *testing.T) {

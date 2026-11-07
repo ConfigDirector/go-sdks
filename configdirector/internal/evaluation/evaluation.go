@@ -82,22 +82,25 @@ type ServedValue struct {
 }
 
 // Evaluate serves config's value for context: the value of the first rule in evaluation order
-// that applies, or the default targeting rule value. A segment condition is looked up in
-// segments.
+// that applies, or the default targeting rule value. A percentage rollout reached by a context
+// without an identifier does not apply, like a conditional rule whose conditions fail, and the
+// rules after it are tried; the default targeting rule value then says a rollout was skipped
+// when no later rule applied. A segment condition is looked up in segments.
 func Evaluate(config Config, context Context, segments Segments) ServedValue {
+	aRolloutWasSkipped := false
 	for _, rule := range inEvaluationOrder(config.TargetingRules.Rules) {
 		servedValue, outcome := rule.serve(config.ID, context, segments)
 		switch outcome {
 		case ruleServedAValue:
 			return servedValue
 		case ruleSkippedARollout:
-			defaultTargetingRuleValue := config.TargetingRules.defaultTargetingRuleValue()
-			defaultTargetingRuleValue.RolloutSkippedNoIdentifier = true
-			return defaultTargetingRuleValue
+			aRolloutWasSkipped = true
 		case ruleNotMatched:
 		}
 	}
-	return config.TargetingRules.defaultTargetingRuleValue()
+	defaultTargetingRuleValue := config.TargetingRules.defaultTargetingRuleValue()
+	defaultTargetingRuleValue.RolloutSkippedNoIdentifier = aRolloutWasSkipped
+	return defaultTargetingRuleValue
 }
 
 func (targetingRules TargetingRules) defaultTargetingRuleValue() ServedValue {

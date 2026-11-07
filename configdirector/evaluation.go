@@ -7,9 +7,9 @@ package configdirector
 type UserContext struct {
 	// ID uniquely identifies the user. It decides which share of a percentage rollout the user falls
 	// in, so changing it can move the user to a different share. A context without an ID skips
-	// percentage rollouts: it is served the default targeting rule value, and the targeting rules
-	// after the rollout are not tried. For a user without a stable identity, use a session or device
-	// ID to keep them in a rollout.
+	// percentage rollouts: a rollout does not apply to it, the targeting rules after the rollout
+	// are tried, and the default targeting rule value is served when none of them applies. For a
+	// user without a stable identity, use a session or device ID to keep them in a rollout.
 	ID string
 
 	// Kind is the kind of entity the context represents, such as device, organization or tenant.
@@ -42,8 +42,10 @@ const (
 	EvaluationReasonFoundMatch EvaluationReason = "found-match"
 
 	// EvaluationReasonRolloutSkippedNoIdentifier means the targeting rules reached a percentage
-	// rollout and the context has no ID to place it in a share, so the default targeting rule value
-	// was served. Its UsedDefault is false: the value comes from ConfigDirector.
+	// rollout the context has no ID to be placed in a share of, and no rule after it applied, so
+	// the default targeting rule value was served. Its UsedDefault is false: the value comes from
+	// ConfigDirector. A rule after the skipped rollout that applies serves with
+	// EvaluationReasonFoundMatch.
 	EvaluationReasonRolloutSkippedNoIdentifier EvaluationReason = "rollout-skipped-no-identifier"
 
 	// EvaluationReasonConfigStateMissing means the client holds no config with the requested key.

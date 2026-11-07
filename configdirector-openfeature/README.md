@@ -73,7 +73,7 @@ A context with neither a targeting key nor an `id` attribute skips percentage ro
 | Outcome | `Reason` | `ErrorCode` |
 |---|---|---|
 | A value was evaluated | `TARGETING_MATCH`, with the variation's name as the `Variant` when it has one, otherwise the value's id | |
-| A percentage rollout was skipped because the context has no targeting key or `id` | `DEFAULT`, with the `Variant` of the default targeting rule value | |
+| A percentage rollout was skipped because the context has no targeting key or `id`, and no rule after it applied | `DEFAULT`, with the `Variant` of the default targeting rule value | |
 | The config has no value | `DEFAULT` | |
 | No config has that key | `ERROR` | `FLAG_NOT_FOUND` |
 | The value does not match the requested type | `ERROR` | `TYPE_MISMATCH` |

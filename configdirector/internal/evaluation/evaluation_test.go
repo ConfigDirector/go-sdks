@@ -203,13 +203,31 @@ func TestASkippedRolloutReportsTheVariationOfTheDefaultTargetingRuleValue(t *tes
 	require.Equal(t, ServedValue{Text: "NONE", ValueID: "default-value", VariationID: "control", RolloutSkippedNoIdentifier: true}, served)
 }
 
-func TestASkippedRolloutEndsTheWalkWithoutTryingLaterRules(t *testing.T) {
+func TestAContextWithoutAnIdentifierIsServedByTheRuleAfterASkippedRollout(t *testing.T) {
 	config := configWith(percentageRule(share("b0", 100, "0")), valueRule("next", new(1), "B"))
 
 	served := Evaluate(config, Context{}, nil)
 
-	require.Equal(t, "NONE", served.Text)
-	require.True(t, served.RolloutSkippedNoIdentifier)
+	require.Equal(t, ServedValue{Text: "B", ValueID: "next-value", RuleMatched: true}, served)
+}
+
+func TestAContextWithoutAnIdentifierMatchingAConditionalRolloutIsServedByALaterRuleOnTheAppVersion(t *testing.T) {
+	rollout := percentageRule(share("b0", 100, "0"))
+	rollout.Kind = RuleKindConditional
+	rollout.Conditions = []Condition{planIs("pro")}
+	config := configWith(rollout, valueRule("version-2", new(1), "B", appVersionAtLeast("2.0.0")))
+
+	served := Evaluate(config, Context{Traits: map[string]any{"plan": "pro"}, AppVersion: "2.1.0"}, nil)
+
+	require.Equal(t, ServedValue{Text: "B", ValueID: "version-2-value", RuleMatched: true}, served)
+}
+
+func TestAContextWithoutAnIdentifierMatchingNoRuleAfterASkippedRolloutGetsTheDefaultTargetingRuleValue(t *testing.T) {
+	config := configWith(percentageRule(share("b0", 100, "0")), valueRule("next", new(1), "B", planIs("pro")))
+
+	served := Evaluate(config, Context{Traits: map[string]any{"plan": "free"}}, nil)
+
+	require.Equal(t, ServedValue{Text: "NONE", ValueID: "default-value", RolloutSkippedNoIdentifier: true}, served)
 }
 
 func TestARuleBeforeTheRolloutStillServesAContextWithoutAnIdentifier(t *testing.T) {
@@ -255,10 +273,21 @@ func TestARolloutWithoutAShareListIsNotMatchedForAContextWithoutAnIdentifier(t *
 	require.False(t, served.RolloutSkippedNoIdentifier)
 }
 
-func TestARolloutWithAnEmptyShareListIsSkippedForAContextWithoutAnIdentifier(t *testing.T) {
+func TestARolloutWithAnEmptyShareListIsSkippedForAContextWithoutAnIdentifierAndTheNextRuleIsTried(t *testing.T) {
 	empty := percentageRule()
 	empty.Percentages = []Percentage{}
 	config := configWith(empty, valueRule("next", new(1), "B"))
+
+	served := Evaluate(config, Context{}, nil)
+
+	require.Equal(t, "B", served.Text)
+	require.False(t, served.RolloutSkippedNoIdentifier)
+}
+
+func TestARolloutWithAnEmptyShareListAndNoLaterRuleIsSkippedForAContextWithoutAnIdentifier(t *testing.T) {
+	empty := percentageRule()
+	empty.Percentages = []Percentage{}
+	config := configWith(empty)
 
 	served := Evaluate(config, Context{}, nil)
 

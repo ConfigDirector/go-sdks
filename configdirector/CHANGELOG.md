@@ -9,6 +9,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- A context without an `ID` is now served by the targeting rules after a percentage rollout it
+  skipped. A rollout the context cannot be placed in does not apply, like a conditional rule whose
+  conditions fail, so a later rule the context matches, such as one on the app version, serves it
+  with the reason `EvaluationReasonFoundMatch`. The default targeting rule value, with the reason
+  `EvaluationReasonRolloutSkippedNoIdentifier`, is served only when no rule after the skipped
+  rollout applies. Since 0.5.0, the skipped rollout ended the evaluation and the rules after it were
+  not tried.
+
 ## [0.5.0] - 2026-11-06
 
 ### Added
