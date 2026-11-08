@@ -9,13 +9,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-07
+
 ### Fixed
 
 - A context without a targeting key or `id` is now served by the targeting rules after a percentage
   rollout it skipped, with the reason `TARGETING_MATCH` when one of them applies. The default
   targeting rule value, with the reason `DEFAULT`, is served only when no rule after the skipped
   rollout applies. Since 0.5.0, the skipped rollout ended the evaluation and the rules after it were
-  not tried. The fix is in the `configdirector` module this release depends on.
+  not tried. The fix is in `configdirector` v0.5.1, which this release requires.
 
 ## [0.5.0] - 2026-11-06
 
